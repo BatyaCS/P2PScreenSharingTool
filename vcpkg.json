@@ -14,6 +14,10 @@
         "opengl",
         "win32ui"
       ]
+    },
+    {
+      "name": "ffmpeg",
+      "features": ["x264"] 
     }
   ]
 }

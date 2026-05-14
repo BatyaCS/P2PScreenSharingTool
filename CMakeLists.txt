@@ -12,9 +12,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenCV REQUIRED)
 find_package(Stb REQUIRED)
 
+# Vcpkg manages FFmpeg packages via pkgconfig or direct paths. 
+# Safe manual find for Windows/vcpkg:
+find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h)
+find_library(AVCODEC_LIB avcodec)
+find_library(AVUTIL_LIB avutil)
+find_library(SWSCALE_LIB swscale)
+
 set(APP_SOURCES 
     "src/main.cpp"
     "src/capturer/video-capturer.cpp"
+    "src/encoder/stream-encoder.cpp"
 )
 
 add_executable(CaptureApp ${APP_SOURCES})
@@ -25,5 +33,8 @@ target_include_directories(CaptureApp PRIVATE
 )
 
 target_link_libraries(CaptureApp PRIVATE 
-    ${OpenCV_LIBS}
+  ${OpenCV_LIBS}
+  ${AVCODEC_LIB} 
+  ${AVUTIL_LIB} 
+  ${SWSCALE_LIB}
 )
