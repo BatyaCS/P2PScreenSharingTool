@@ -3,7 +3,6 @@
 
 bool StreamDecoder::init()
 {
-    // Find the H.264 decoder
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec)
     {
@@ -15,7 +14,6 @@ bool StreamDecoder::init()
     if (!_codec_context)
         return false;
 
-    // Open the codec
     if (avcodec_open2(_codec_context, codec, nullptr) < 0)
     {
         std::cerr << "Could not open decoder.\n";
@@ -47,7 +45,7 @@ void StreamDecoder::release()
     if (_codec_context) avcodec_free_context(&_codec_context);
 }
 
-bool StreamDecoder::decode_packet(const std::vector<uint8_t>& packet_data, cv::Mat& out_frame)
+bool StreamDecoder::decode_h264_to_bgra(const std::vector<uint8_t>& packet_data, cv::Mat& out_frame)
 {
     if (packet_data.empty() || !_codec_context)
         return false;
@@ -69,10 +67,7 @@ bool StreamDecoder::decode_packet(const std::vector<uint8_t>& packet_data, cv::M
     // 3. Receive the decoded frame
     ret = avcodec_receive_frame(_codec_context, _frame_yuv);
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-    {
-        // Not enough data to output a frame yet (B-frames buffering, etc.)
         return false; 
-    }
     else if (ret < 0)
     {
         std::cerr << "Error during decoding!\n";

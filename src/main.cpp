@@ -98,7 +98,7 @@ int main()
             {
                 cv::Mat decoded_frame;
                 // Decode
-                if (decoder.decode_packet(packet, decoded_frame))
+                if (decoder.decode_h264_to_bgra(packet, decoded_frame))
                 {
                     // Safely pass to main thread
                     std::lock_guard<std::mutex> lock(frame_mutex);

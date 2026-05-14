@@ -24,9 +24,7 @@ public:
     bool init();
     void release();
 
-    // Takes an encoded H.264 packet and attempts to decode it.
-    // Returns true if a full frame was successfully decoded and placed into out_frame.
-    bool decode_packet(const std::vector<uint8_t>& packet_data, cv::Mat& out_frame);
+    bool decode_h264_to_bgra(const std::vector<uint8_t>& packet_data, cv::Mat& out_frame);
 
 private:
     AVCodecContext* _codec_context = nullptr;
