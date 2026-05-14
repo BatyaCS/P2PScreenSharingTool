@@ -141,7 +141,11 @@ const cv::Mat& VideoCapturer::grab_frame(const CaptureConfig& cap)
     // 3. Perform WinAPI capturing using cached resources
     HBITMAP hbm_old = (HBITMAP)SelectObject(_hdc_mem, _hbm_screen);
 
-    BitBlt(_hdc_mem, 0, 0, width, height, hdc_window, src_x, src_y, SRCCOPY | CAPTUREBLT);
+    // Добавляем проверку: если это окно, используем специальный метод
+    if (cap.target == Target::APPLICATION)
+        PrintWindow(target_hwnd, _hdc_mem, 3);
+    else
+        BitBlt(_hdc_mem, 0, 0, width, height, hdc_window, src_x, src_y, SRCCOPY | CAPTUREBLT);
 
     // 4. Extract bits directly into our cached OpenCV Mat
     BITMAPINFOHEADER bi = { sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB };

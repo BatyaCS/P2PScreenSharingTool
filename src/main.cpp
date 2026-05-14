@@ -13,24 +13,19 @@
 
 int main()
 {
-    // 1. Initialize core modules
     VideoCapturer  capturer;
     StreamEncoder  encoder;
     StreamDecoder  decoder;
 
-    // Shared resources for passing frames from the background thread to the UI thread
     cv::Mat display_frame;
     std::mutex frame_mutex;
 
-    // 2. Initialize the UI
     ApplicationUI ui;
     if (!ui.init("TS3 Streamer - P2P Screen Share", 1280, 720))
     {
         std::cerr << "Failed to initialize the UI!\n";
         return -1;
     }
-
-    // 3. Setup UI Callbacks (The Bridge)
 
     // Handle fetching sources (Windows/Monitors) and converting them to UI DTOs
     ui.set_refresh_sources_callback([](bool is_application) 
@@ -108,9 +103,7 @@ int main()
         };
 
         if (!capturer.start(cap_config, out_config, loopback_callback))
-        {
             std::cerr << "Failed to start capture loop!\n";
-        }
     });
 
     // Handle the "Stop Stream" button click
@@ -118,6 +111,9 @@ int main()
     {
         std::cout << "Stopping stream...\n";
         capturer.stop();
+
+        encoder.release();
+        decoder.release();
         
         // Clear the display frame safely
         {
