@@ -30,7 +30,10 @@ bool Application::init()
     // ui.set_loopback_frame_mem(...);
 
     _ui.set_start_stop_stream_callback([this]() { this->handle_start_stop_stream(); });
+    _ui.set_start_stop_rx_callback([this]() { this->handle_start_stop_preview(); });
     _ui.set_sources_update_callback([this]() { this->handle_sources_update(); });
+
+    return true;
 }
 
 void Application::cleanup()
@@ -57,12 +60,17 @@ void Application::run()
 
 void Application::handle_start_stop_stream()
 {
-    std::cout << "Handle start stop stream called!\n";
+    _ui.log("Handle start stop stream called!");
+}
+
+void Application::handle_start_stop_preview()
+{
+    _ui.log_err("Handle start stop stream preview called!\n");
 }
 
 void Application::handle_sources_update()
 {
-    std::cout << "Handle sources update called!\n";
+    _ui.log("Handle sources update called!\n");
 
     const ApplicationUI::UiStreamConfig& cfg = _ui.fetch_stream_config();
     std::vector<std::string> sources;

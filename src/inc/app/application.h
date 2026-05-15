@@ -26,6 +26,7 @@ public:
 
 private:
     void handle_start_stop_stream();
+    void handle_start_stop_preview();
     void handle_sources_update();
 
     ApplicationUI   _ui;

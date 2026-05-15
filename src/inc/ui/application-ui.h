@@ -20,6 +20,7 @@ public:
     enum class UiElement : size_t 
     {
         STREAM_CONFIG,
+        RX_CONFIG,
         PREVIEW_CONFIG,
 
         COUNT
@@ -62,6 +63,7 @@ public:
     };
 
     using StartStopStreamCallback = std::function<void()>;
+    using StartStopRxCallback = std::function<void()>;
     using SourcesUpdateCallback = std::function<void()>;
 
     ApplicationUI() = default;
@@ -83,15 +85,35 @@ public:
     void set_loopback_frame_mem(const cv::Mat& frame) { _loopback_frame = &frame; }
 
     void set_start_stop_stream_callback(StartStopStreamCallback callback) { _start_stop_stream_callback = callback; }
+    void set_start_stop_rx_callback(StartStopRxCallback callback) { _start_stop_rx_callback = callback; }
     void set_sources_update_callback(SourcesUpdateCallback callback) { _sources_update_callback = callback; }
 
     bool is_ui_locked(UiElement el) const { return _locked_ui.test(static_cast<size_t>(el)); }
     void set_ui_locked(UiElement el, bool is_locked) { _locked_ui.set(static_cast<size_t>(el), is_locked); }
 
+    void log(const std::string& message);
+    void log_err(const std::string& message);
+
 private:
+    struct LogEntry 
+    {
+        std::string text;
+        bool is_error;
+    };
+
     bool render_broadcaster_tab();
     bool render_web_preview_tab();
     bool render_loopback_preview_tab();
+
+    void render_capture_settings();
+    void render_encoding_settings();
+    void render_network_tx_settings();
+    void render_network_rx_settings();
+    void render_action_buttons();
+
+    void render_log_window();
+
+    std::string get_current_timestamp() const;
 
     GLFWwindow *    _window = nullptr;
     GLuint          _web_frame_texture = 0;
@@ -107,11 +129,15 @@ private:
     UiNetworkConfigTx   _network_config_tx;
 
     std::vector<std::string>    _current_sources;
+    std::vector<LogEntry>       _logs;
 
     StartStopStreamCallback     _start_stop_stream_callback;
+    StartStopRxCallback         _start_stop_rx_callback;
     SourcesUpdateCallback       _sources_update_callback;
 
     std::bitset<static_cast<size_t>(UiElement::COUNT)> _locked_ui;
+
+    bool _scroll_to_bottom = false;
 };
 
 #endif /* APPLICATION_UI_H_ */
