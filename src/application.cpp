@@ -2,6 +2,7 @@
 #include <app/application.h>
 
 #include <iostream>
+#include <format>
 
 static const ApplicationUI::UiConfig default_ui_config = 
 {
@@ -28,9 +29,9 @@ static const ApplicationUI::UiNetworkConfigRx default_ui_network_config_rx =
 
 static const ApplicationUI::UiNetworkConfigTx default_ui_network_config_tx = 
 {
-    .stream_id = "mystream",
-    .stream_pwd = "123",
-    .server_ip = "yourip",
+    .stream_id = "publish:mystream",
+    .stream_pwd = "",
+    .server_ip = "185.198.166.86",
     .server_port = 8890
 };
 
@@ -43,8 +44,8 @@ bool Application::init()
         return false;
     }
 
-    // ui.set_web_frame_mem(...);
-    // ui.set_loopback_frame_mem(...);
+    _ui.set_web_frame_mem(_web_frame);
+    _ui.set_loopback_frame_mem(_loopback_frame);
 
     _ui.set_start_stop_stream_callback([this]() { this->handle_start_stop_stream(); });
     _ui.set_start_stop_rx_callback([this]() { this->handle_start_stop_preview(); });
@@ -65,19 +66,93 @@ void Application::run()
 
     while (running)
     {        
-        // {
-        //     std::lock_guard<std::mutex> lock(frame_mutex);
-        //     if (!loopback_local_frame.empty())
-        //         loopback_local_frame.copyTo(loopback_display_frame);
-        // }
+        {
+            std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
+            if (!_loopback_frame_tmp.empty())
+                _loopback_frame_tmp.copyTo(_loopback_frame);
+        }
 
         running = _ui.render();
     }
 }
 
+void Application::handle_capturer_frame_received(const cv::Mat& frame)
+{
+    const ApplicationUI::UiStreamConfig& stream_cfg = _ui.fetch_stream_config();
+    
+    if (ApplicationUI::UiStreamConfig::StreamTarget::LOOPBACK == stream_cfg.stream_target)
+    {            
+        std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
+        frame.copyTo(_loopback_frame_tmp);
+    }
+    else
+    {
+        std::vector<uint8_t> packet = _encoder.encode_h264_from_bgra(frame);
+        if (!packet.empty())
+            _srt_sender.send_frame(packet);
+    }
+}
+
 void Application::handle_start_stop_stream()
 {
-    _ui.log("Handle start stop stream called!");
+    const ApplicationUI::UiStreamConfig& stream_cfg = _ui.fetch_stream_config();
+    const bool is_web_stream = ApplicationUI::UiStreamConfig::StreamTarget::WEB == stream_cfg.stream_target;
+    
+    if (!_is_stream_enabled)
+    {
+        _ui.log(std::format("Starting stream with {} kbps at {} FPS.", stream_cfg.target_br_kbps, stream_cfg.target_fps));
+
+        VideoCapturer::OutputConfig out_config;
+        out_config.width = 1920;
+        out_config.height = 1080;
+        out_config.target_fps = stream_cfg.target_fps;
+
+        VideoCapturer::CaptureConfig cap_config;
+        cap_config.target = stream_cfg.capture_target == ApplicationUI::UiStreamConfig::CaptureTarget::WINDOW ? VideoCapturer::Target::APPLICATION : VideoCapturer::Target::DISPLAY;
+        
+        if (stream_cfg.capture_target == ApplicationUI::UiStreamConfig::CaptureTarget::WINDOW)
+            cap_config.window_handle = static_cast<HWND>(_video_sources[stream_cfg.source_idx]);
+        else
+            cap_config.monitor_handle = static_cast<HMONITOR>(_video_sources[stream_cfg.source_idx]);
+
+        if (is_web_stream)
+        {
+            StreamEncoder::EncoderConfig enc_config;
+            enc_config.width = out_config.width;
+            enc_config.height = out_config.height;
+            enc_config.fps = stream_cfg.target_fps;
+            enc_config.bitrate_kbps = stream_cfg.target_br_kbps;
+
+            _encoder.init(enc_config);
+
+            const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
+            if (!_srt_sender.init(network_cfg_tx.server_ip, network_cfg_tx.server_port, network_cfg_tx.stream_id, network_cfg_tx.stream_pwd))
+                return _ui.log_err("Failed to initialize SRT Sender!");; 
+        }
+
+        if (!_capturer.start(cap_config, out_config, [this](const cv::Mat& frame) { this->handle_capturer_frame_received(frame); }))
+            return _ui.log_err("Failed to start video capturer loop!\n");
+
+        _ui.log("Video Streaming started\n");
+        _is_stream_enabled = true;
+    }
+    else
+    {
+        _capturer.stop();
+        _encoder.release();
+        _srt_sender.stop();
+        
+        {
+            std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
+            _loopback_frame_tmp.release();
+            _loopback_frame.release();
+        }
+
+        _ui.log("Video Streaming stopped\n");
+        _is_stream_enabled = false;
+    }
+    
+    _ui.set_ui_locked(ApplicationUI::UiElement::STREAM_CONFIG, _is_stream_enabled);
 }
 
 void Application::handle_start_stop_preview()
@@ -87,23 +162,28 @@ void Application::handle_start_stop_preview()
 
 void Application::handle_sources_update()
 {
-    _ui.log("Handle sources update called!\n");
-
     const ApplicationUI::UiStreamConfig& cfg = _ui.fetch_stream_config();
-    std::vector<std::string> sources;
+    std::vector<std::string> ui_sources;
         
+    _video_sources.clear();
     if (ApplicationUI::UiStreamConfig::CaptureTarget::WINDOW == cfg.capture_target)
     {
         auto windows = VideoCapturer::get_available_windows();
         for (const auto& w : windows)
-            sources.push_back(w.second);
+        {
+            _video_sources.push_back(w.first);
+            ui_sources.push_back(w.second);
+        }
     }
     else
     {
         auto monitors = VideoCapturer::get_available_monitors();
         for (const auto& m : monitors)
-            sources.push_back(m.second);
+        {
+            _video_sources.push_back(m.first);
+            ui_sources.push_back(m.second);
+        }
     }
 
-    _ui.set_stream_sources(sources);
+    _ui.set_stream_sources(ui_sources);
 }

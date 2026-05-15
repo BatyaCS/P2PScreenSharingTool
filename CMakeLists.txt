@@ -22,6 +22,7 @@ find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h)
 find_library(AVCODEC_LIB avcodec)
 find_library(AVUTIL_LIB avutil)
 find_library(SWSCALE_LIB swscale)
+find_library(AVFORMAT_LIB avformat)
 
 find_path(SRT_INCLUDE_DIR NAMES srt/srt.h)
 find_library(SRT_LIBRARY NAMES srt libsrt)
@@ -58,6 +59,7 @@ target_include_directories(CaptureApp PRIVATE
 target_link_libraries(CaptureApp PRIVATE 
   ${OpenCV_LIBS}
   ${AVCODEC_LIB} 
+  ${AVFORMAT_LIB}
   ${AVUTIL_LIB} 
   ${SWSCALE_LIB}
   glfw

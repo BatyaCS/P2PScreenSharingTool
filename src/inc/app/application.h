@@ -25,6 +25,11 @@ public:
     void run();
 
 private:
+    using VideoSources = std::vector<void*>;
+
+    void handle_capturer_frame_received(const cv::Mat& frame);
+
+    // UI Handlers
     void handle_start_stop_stream();
     void handle_start_stop_preview();
     void handle_sources_update();
@@ -32,13 +37,20 @@ private:
     ApplicationUI   _ui;
 
     VideoCapturer   _capturer;
+    VideoSources    _video_sources;
+
     StreamEncoder   _encoder;
     StreamDecoder   _decoder;
     SrtSender       _srt_sender;
 
-    cv::Mat         _loopback_local_frame;
-    cv::Mat         _loopback_display_frame;
-    std::mutex      _frame_mutex;
+    cv::Mat         _web_frame;
+    cv::Mat         _web_frame_tmp;
+
+    cv::Mat         _loopback_frame;
+    cv::Mat         _loopback_frame_tmp;
+
+    std::mutex      _loopback_frame_mutex;
+    std::mutex      _web_frame_mutex;
 
     bool            _is_stream_enabled = false;
     bool            _is_preview_enabled = false;

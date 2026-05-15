@@ -11,6 +11,7 @@ extern "C"
 #include <libavutil/opt.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+#include <libavformat/avformat.h>
 }
 
 class StreamEncoder
@@ -44,6 +45,14 @@ private:
     EncoderConfig       _config;
 
     uint                _frame_pts = 0;
+
+    AVFormatContext*        _format_context = nullptr;
+    AVStream*               _video_stream = nullptr;
+    AVIOContext*            _avio_context = nullptr;
+    uint8_t*                _avio_buffer = nullptr;
+    std::vector<uint8_t>    _muxed_data; 
+
+    static int avio_write_packet(void *opaque, const uint8_t *buf, int buf_size);
 };
 
 #endif /* STREAM_ENCODER_H_ */
