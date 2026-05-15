@@ -50,19 +50,22 @@ void VideoCapturer::capture_loop(CaptureConfig cap, OutputConfig out, FrameCallb
     while (!_should_stop.load())
     {
         auto start_time = std::chrono::steady_clock::now();
-
-        cv::Mat raw_frame = grab_frame(cap);
+        const cv::Mat& raw_frame = grab_frame(cap);
         
         if (!raw_frame.empty())
         {
-            cv::Mat resized_frame;
             if (raw_frame.cols != static_cast<int>(out.width) || raw_frame.rows != static_cast<int>(out.height))
-                cv::resize(raw_frame, resized_frame, cv::Size(out.width, out.height), 0, 0, cv::INTER_AREA);
+            {
+                cv::resize(raw_frame, _resized_frame, cv::Size(out.width, out.height), 0, 0, cv::INTER_LINEAR);
+                
+                if (callback)
+                    callback(_resized_frame);
+            }
             else
-                resized_frame = raw_frame;
-
-            if (callback)
-                callback(resized_frame);
+            {
+                if (callback)
+                    callback(raw_frame);
+            }
         }
 
         auto end_time = std::chrono::steady_clock::now();
