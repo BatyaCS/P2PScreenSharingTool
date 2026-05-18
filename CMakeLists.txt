@@ -45,7 +45,12 @@ set(APP_SOURCES
     "src/encoder/stream-encoder.cpp"
     "src/decoder/stream-decoder.cpp"
     "src/ui/application-ui.cpp"
-    "src/network/srt-sender.cpp"
+    
+    "src/network/srt-transmitter.cpp"
+    "src/network/srt-environment.cpp"
+
+    "src/external/subm/src/debug/dump.cpp"
+    "src/external/subm/src/log/log.cpp"
 )
 
 add_executable(CaptureApp ${APP_SOURCES})
@@ -53,6 +58,7 @@ add_executable(CaptureApp ${APP_SOURCES})
 target_include_directories(CaptureApp PRIVATE 
   "${CMAKE_CURRENT_SOURCE_DIR}/inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/inc/config"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/external/subm/inc"
   ${Stb_INCLUDE_DIR}
 )
 

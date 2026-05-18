@@ -5,7 +5,7 @@
 #include <capturer/video-capturer.h>
 #include <encoder/stream-encoder.h>
 #include <decoder/stream-decoder.h>
-#include <network/srt-sender.h>
+#include <network/srt-transmitter.h>
 
 #include <mutex>
 #include <fstream>
@@ -41,7 +41,7 @@ private:
 
     StreamEncoder   _encoder;
     StreamDecoder   _decoder;
-    SrtSender       _srt_sender;
+    SrtTransmitter       _srt_sender;
 
     cv::Mat         _web_frame;
     cv::Mat         _web_frame_tmp;

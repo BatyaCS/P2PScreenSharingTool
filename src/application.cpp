@@ -95,7 +95,7 @@ void Application::handle_capturer_frame_received(const cv::Mat& frame)
     {
         std::vector<uint8_t> packet = _encoder.encode_h264_from_bgra(frame);
         if (!packet.empty())
-            _srt_sender.send_frame(packet);
+            _srt_sender.send(packet);
     }
 }
 
@@ -131,9 +131,9 @@ void Application::handle_start_stop_stream()
 
             _encoder.init(enc_config);
 
-            const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
-            if (!_srt_sender.init(network_cfg_tx.server_ip, network_cfg_tx.server_port, network_cfg_tx.stream_id, network_cfg_tx.stream_pwd))
-                return _ui.log_err("Failed to initialize SRT Sender!");; 
+            // const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
+            // if (!_srt_sender.open_connection(network_cfg_tx.server_ip, network_cfg_tx.server_port, network_cfg_tx.stream_id, network_cfg_tx.stream_pwd))
+            //     return _ui.log_err("Failed to initialize SRT Sender!");; 
         }
 
         if (!_capturer.start(cap_config, out_config, [this](const cv::Mat& frame) { this->handle_capturer_frame_received(frame); }))
@@ -146,7 +146,7 @@ void Application::handle_start_stop_stream()
     {
         _capturer.stop();
         _encoder.release();
-        _srt_sender.stop();
+        _srt_sender.close_connection();
         
         {
             std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
