@@ -64,6 +64,8 @@ void Application::run()
     handle_sources_update();
     bool running = true;
 
+    LOG("Application started!\n");
+
     while (running)
     {        
         {

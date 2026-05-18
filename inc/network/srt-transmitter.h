@@ -33,7 +33,7 @@ public:
     bool open_connection(const NetworkConfig& config);
     bool close_connection();
 
-    void send(const std::vector<uint8_t>& data);
+    bool send(const std::vector<uint8_t>& data);
 
 private:
     using SRTSOCKET = int32_t;

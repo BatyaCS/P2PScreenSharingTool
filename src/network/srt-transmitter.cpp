@@ -86,34 +86,40 @@ bool SrtTransmitter::close_connection()
     return true;
 }
 
-void SrtTransmitter::send(const std::vector<uint8_t>& data) 
+bool SrtTransmitter::send(const std::vector<uint8_t>& data) 
 {
-    if (_socket == SRT_INVALID_SOCK || data.empty()) 
-        return;
+    static constexpr size_t MAX_PAYLOAD_SIZE_BYTES = 1316;
 
     std::lock_guard<std::mutex> lock(_send_mutex);
 
-    const size_t max_payload = 1316;
-
-    size_t bytes_sent = 0;
-    size_t total_size = data.size();
-
-    while (bytes_sent < total_size) 
+    if (SRT_INVALID_SOCK == _socket)
     {
+        LOG_ERROR("Failed to send SRT data, socket isn't connected!\n");
+        return false;
+    }
 
-        const size_t bytes_left = total_size - bytes_sent;
-        const size_t bytes_to_send = std::min(max_payload, bytes_left);
+    const size_t bytes_to_send = data.size();
+    size_t bytes_sent = 0;
+    
+    while (bytes_sent < bytes_to_send) 
+    {
+        const size_t bytes_left = bytes_to_send - bytes_sent;
+        const size_t bytes_to_send = std::min(MAX_PAYLOAD_SIZE_BYTES, bytes_left);
         
-        int res = srt_sendmsg(_socket, 
-                             (const char*)(data.data() + bytes_sent), 
-                             (int)bytes_to_send, 
-                             -1, 0);
+        const int res = srt_sendmsg(_socket,  
+                            reinterpret_cast<const char*>(&data.at(bytes_sent)), 
+                            static_cast<int>(bytes_to_send),
+                            static_cast<int>(SrtMessageTtl::TTL_INFINITE), 
+                            static_cast<int>(SrtDeliveryOrder::OUT_OF_ORDER));
         
-        if (res == SRT_ERROR) {
-            std::cerr << "SRT Send Chunk Error: " << srt_getlasterror_str() << std::endl;
-            break;
+        if (SRT_ERROR == res) 
+        {
+            LOG_ERROR("Failed to send SRT chunk! Error: %s\n", srt_getlasterror_str());
+            return false;
         }
         
         bytes_sent += bytes_to_send;
     }
+
+    return true;
 }
