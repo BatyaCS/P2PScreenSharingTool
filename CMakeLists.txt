@@ -38,6 +38,11 @@ else()
     message(FATAL_ERROR "Could not find SRT library. Checked: ${SRT_INCLUDE_DIR} and ${SRT_LIBRARY}")
 endif()
 
+set(BUILD_EXAMPLE OFF CACHE BOOL "Disable SCL examples" FORCE)
+set(BUILD_CSHARP OFF CACHE BOOL "Disable SCL C# bindings" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
+add_subdirectory(src/external/screen_capture_lite)
+
 set(APP_SOURCES
     "src/main.cpp"
     "src/application.cpp"
@@ -59,6 +64,7 @@ target_include_directories(CaptureApp PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/inc"
   "${CMAKE_CURRENT_SOURCE_DIR}/inc/config"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/external/subm/inc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/external/screen_capture_lite/include"
   ${Stb_INCLUDE_DIR}
 )
 
@@ -73,4 +79,5 @@ target_link_libraries(CaptureApp PRIVATE
   OpenGL::GL
   SRT::srt
   ws2_32
+  screen_capture_lite_static
 )
