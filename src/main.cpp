@@ -1,4 +1,5 @@
 #include <common.h>
+#include <iostream>
 #include <chrono>
 #include <vector>
 

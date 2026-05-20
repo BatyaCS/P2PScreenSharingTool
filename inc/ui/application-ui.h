@@ -1,12 +1,15 @@
 #ifndef APPLICATION_UI_H_
 #define APPLICATION_UI_H_
 
+#include <ui/video-preview-widget.h>
+
 #include <string>
 #include <vector>
 #include <functional>
-#include <GLFW/glfw3.h>
-#include <opencv2/opencv.hpp>
 #include <bitset>
+
+#include <GLFW/glfw3.h>
+#include <d3d11.h>
 
 class ApplicationUI
 {
@@ -74,14 +77,16 @@ public:
     bool init(const UiConfig& config, const UiStreamConfig& stream_config, const UiNetworkConfigRx& config_rx, const UiNetworkConfigTx& config_tx);
     void shutdown();
 
+    ID3D11Device* get_d3d11_device() const { return _pd3dDevice; }
+
     const UiNetworkConfigRx& fetch_network_rx_config() const { return _network_config_rx; }
     const UiNetworkConfigTx& fetch_network_tx_config() const { return _network_config_tx; }
 
     const UiStreamConfig& fetch_stream_config() const { return _stream_config; }
     void set_stream_sources(const std::vector<std::string>& sources) { _current_sources = sources; _selected_source = 0; _stream_config.source = sources[0]; }
 
-    void set_web_frame_mem(const cv::Mat& frame) { _web_frame = &frame; }
-    void set_loopback_frame_mem(const cv::Mat& frame) { _loopback_frame = &frame; }
+    void set_web_texture(void * srv, uint w, uint h) { _web_srv = srv; _web_w = w; _web_h = h; }
+    void set_loopback_texture(void * srv, uint w, uint h) { _loopback_srv = srv; _loopback_w = w; _loopback_h = h; }
 
     void set_start_stop_stream_callback(StartStopStreamCallback callback) { _start_stop_stream_callback = callback; }
     void set_start_stop_rx_callback(StartStopRxCallback callback) { _start_stop_rx_callback = callback; }
@@ -102,30 +107,41 @@ private:
 
     bool render_broadcaster_tab();
     bool render_web_preview_tab();
-    bool render_loopback_preview_tab();
 
     void render_capture_settings();
     void render_encoding_settings();
     void render_network_tx_settings();
     void render_network_rx_settings();
-    void render_action_buttons();
 
     void render_log_window();
 
+    bool CreateDeviceD3D(HWND hWnd);
+    void CleanupDeviceD3D();
+    void CreateRenderTarget();
+    void CleanupRenderTarget();
+
     std::string get_current_timestamp() const;
 
-    GLFWwindow *    _window = nullptr;
-    GLuint          _web_frame_texture = 0;
-    GLuint          _loopback_frame_texture = 0;
+    GLFWwindow *                _window = nullptr;
+    ID3D11Device *              _pd3dDevice = nullptr;
+    ID3D11DeviceContext *       _pd3dDeviceContext = nullptr;
+    IDXGISwapChain *            _pSwapChain = nullptr;
+    ID3D11RenderTargetView *    _mainRenderTargetView = nullptr;
 
-    const cv::Mat * _web_frame = nullptr;
-    const cv::Mat * _loopback_frame = nullptr;
+    VideoPreviewWidget          _web_preview_widget;
+    VideoPreviewWidget          _loopback_preview_widget;
 
-    UiStreamConfig  _stream_config;
-    UiStreamConfig  _previous_stream_config;
+    void *                      _web_srv = nullptr;
+    void *                      _loopback_srv = nullptr;
 
-    UiNetworkConfigRx   _network_config_rx;
-    UiNetworkConfigTx   _network_config_tx;
+    uint                        _web_w = 0, _web_h = 0;
+    uint                        _loopback_w = 0, _loopback_h = 0;
+
+    UiStreamConfig              _stream_config;
+    UiStreamConfig              _previous_stream_config;
+
+    UiNetworkConfigRx           _network_config_rx;
+    UiNetworkConfigTx           _network_config_tx;
 
     std::vector<std::string>    _current_sources;
     uint                        _selected_source = 0;
@@ -137,7 +153,7 @@ private:
     std::bitset<static_cast<size_t>(UiElement::COUNT)> _locked_ui;
 
     std::vector<LogEntry>       _logs;
-    bool _scroll_to_bottom = false;
+    bool                        _scroll_to_bottom = false;
 };
 
 #endif /* APPLICATION_UI_H_ */

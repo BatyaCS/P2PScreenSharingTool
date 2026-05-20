@@ -49,9 +49,6 @@ bool Application::init()
         return false;
     }
 
-    _ui.set_web_frame_mem(_web_frame);
-    _ui.set_loopback_frame_mem(_loopback_frame);
-
     _ui.set_start_stop_stream_callback([this]() { this->handle_start_stop_stream(); });
     _ui.set_start_stop_rx_callback([this]() { this->handle_start_stop_preview(); });
     _ui.set_sources_update_callback([this]() { this->handle_sources_update(); });
@@ -73,17 +70,18 @@ void Application::run()
 
     while (running)
     {        
-        // {
-        //     std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
-
-        //     if (_is_loopback_frame_updated)
-        //     {
-        //         _is_loopback_frame_updated = false;
-        //         _loopback_frame_tmp.copyTo(_loopback_frame);
-        //     }
-        // }
+        {
+            std::lock_guard<std::mutex> lock(_loopback_mutex);
+            _ui.set_loopback_texture((void*)_current_loopback_srv, _loopback_w, _loopback_h);
+        }
 
         running = _ui.render();
+
+        if (_srv_to_release)
+        {
+            _srv_to_release->Release();
+            _srv_to_release = nullptr;
+        }
     }
 }
 
@@ -94,30 +92,33 @@ bool Application::start_streaming()
 
     _ui.log(std::format("Starting stream with {} kbps at {} FPS.", stream_cfg.target_br_kbps, stream_cfg.target_fps));
 
-    HwStreamEncoder::EncoderConfig enc_cfg;
-    enc_cfg.codec = HwStreamEncoder::StreamCodec::H264_AMF; // need to be gathered from GPU info
-    enc_cfg.fps = stream_cfg.target_fps;
-    enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
-    _encoder.init(enc_cfg);
-
     HwVideoCapturer::CaptureConfig cap_cfg;
     cap_cfg.target = HwVideoCapturer::Target::DISPLAY;
     cap_cfg.target_fps = stream_cfg.target_fps;
     cap_cfg.source_name = stream_cfg.source;
 
-    const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
-    SrtTransmitter::NetworkConfig network_cfg;
-    network_cfg.ip = network_cfg_tx.server_ip;
-    network_cfg.port = network_cfg_tx.server_port;
-    network_cfg.stream_id = network_cfg_tx.stream_id;
-    network_cfg.stream_pdw = network_cfg_tx.stream_pwd;
-
-    if (!_srt_sender.open_connection(network_cfg))
+    if (is_web_stream)
     {
-        _ui.log_err("Failed to initialize SRT Sender!");
-        stop_streaming();
+        HwStreamEncoder::EncoderConfig enc_cfg;
+        enc_cfg.codec = HwStreamEncoder::StreamCodec::H264_AMF; // need to be gathered from GPU info
+        enc_cfg.fps = stream_cfg.target_fps;
+        enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
+        _encoder.init(enc_cfg);
 
-        return false;
+        const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
+        SrtTransmitter::NetworkConfig network_cfg;
+        network_cfg.ip = network_cfg_tx.server_ip;
+        network_cfg.port = network_cfg_tx.server_port;
+        network_cfg.stream_id = network_cfg_tx.stream_id;
+        network_cfg.stream_pdw = network_cfg_tx.stream_pwd;
+
+        if (!_srt_sender.open_connection(network_cfg))
+        {
+            _ui.log_err("Failed to initialize SRT Sender!");
+            stop_streaming();
+
+            return false;
+        }
     }
 
     if (!_capturer.start(cap_cfg, [this](ID3D11Texture2D* tex, ID3D11Device* dev) { this->handle_frame_captured(tex, dev); }))
@@ -140,13 +141,20 @@ void Application::stop_streaming()
     _capturer.stop();
     _encoder.release();
     _srt_sender.close_connection();
-    
-    {
-        std::lock_guard<std::mutex> lock(_loopback_frame_mutex);
-        _loopback_frame_tmp.release();
-        _loopback_frame.release();
-    }
 
+{
+        std::lock_guard<std::mutex> lock(_loopback_mutex);
+        
+        if (_current_loopback_srv) 
+        {
+            _srv_to_release = _current_loopback_srv; 
+            _current_loopback_srv = nullptr; 
+        }
+
+        _loopback_h = 0;
+        _loopback_w = 0;
+    }
+    
     _ui.log("Video Streaming stopped\n");
     _ui.set_ui_locked(ApplicationUI::UiElement::STREAM_CONFIG, false);
 
@@ -155,12 +163,66 @@ void Application::stop_streaming()
 
 void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
-    std::vector<uint8_t> mpegts_data;
-    if (!_encoder.encode_texture(tex, dev, mpegts_data))
-        return stop_streaming();
+    const bool is_loopback = StreamTarget::LOOPBACK == _ui.fetch_stream_config().stream_target;
+
+    if (is_loopback)
+        save_frame_for_loopback(tex, dev);
+    else
+    {
+        std::vector<uint8_t> mpegts_data;
+        if (!_encoder.encode_texture(tex, dev, mpegts_data))
+            return stop_streaming();
+        
+        if (!mpegts_data.empty())
+            _srt_sender.send(mpegts_data);
+    }
+}
+
+void Application::save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* dev)
+{
+    if (!tex || !dev)
+        return;
+
+    D3D11_TEXTURE2D_DESC desc;
+    tex->GetDesc(&desc);
+
+    D3D11_TEXTURE2D_DESC ui_desc = desc;
+    ui_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; 
+    ui_desc.Usage = D3D11_USAGE_DEFAULT;
+    ui_desc.CPUAccessFlags = 0;
+    ui_desc.MiscFlags = 0;
+
+    ID3D11Texture2D* ui_texture = nullptr;
+    HRESULT hr = dev->CreateTexture2D(&ui_desc, nullptr, &ui_texture);
+    if (FAILED(hr)) 
+        return; 
+
+    ID3D11DeviceContext* ctx = nullptr;
+    dev->GetImmediateContext(&ctx);
+    if (ctx)
+    {
+        ctx->CopyResource(ui_texture, tex);
+        ctx->Release();
+    }
+
+    ID3D11ShaderResourceView* new_srv = nullptr;
+    hr = dev->CreateShaderResourceView(ui_texture, nullptr, &new_srv);
     
-    if (!mpegts_data.empty())
-        _srt_sender.send(mpegts_data);
+    ui_texture->Release(); 
+
+    if (FAILED(hr)) 
+        return; 
+
+    {
+        std::lock_guard<std::mutex> lock(_loopback_mutex);
+        
+        if (_current_loopback_srv)
+            _current_loopback_srv->Release();
+        
+        _current_loopback_srv = new_srv;
+        _loopback_w = desc.Width;
+        _loopback_h = desc.Height;
+    }
 }
 
 void Application::handle_start_stop_stream()

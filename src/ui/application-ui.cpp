@@ -4,8 +4,11 @@
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
+#include <imgui_impl_dx11.h>
 #include <iostream>
+
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 static bool InputTextString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) 
 {
@@ -23,35 +26,40 @@ bool ApplicationUI::init(const UiConfig& config, const UiStreamConfig& stream_co
 {
     if (!glfwInit())
     {
-        std::cerr << "Failed to initialize GLFW!\n";
+        LOG_ERROR("Failed to init glfw!\n");
+
         return false;
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    
     _window = glfwCreateWindow(config.width, config.height, config.window_title.c_str(), nullptr, nullptr);
-    if (!_window)
+    if (!_window) 
     {
-        std::cerr << "Failed to create glfw window!\n";
+        LOG_ERROR("Failed to init glfw window!\n");
+
+        glfwTerminate(); 
+        return false; 
+    }
+
+    if (!CreateDeviceD3D(glfwGetWin32Window(_window)))
+    {
+        LOG_ERROR("Failed to create d3d11 device!\n");
+
+        CleanupDeviceD3D();
+        glfwDestroyWindow(_window);
         glfwTerminate();
         return false;
     }
 
-    glfwMakeContextCurrent(_window);
-    glfwSwapInterval(1); 
-
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     
-
     ImGui::StyleColorsDark();
 
-    ImGui_ImplGlfw_InitForOpenGL(_window, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
+    ImGui_ImplGlfw_InitForOther(_window, true);
+    ImGui_ImplDX11_Init(_pd3dDevice, _pd3dDeviceContext);
 
     _stream_config = stream_config;
     _previous_stream_config = stream_config;
@@ -64,24 +72,14 @@ bool ApplicationUI::init(const UiConfig& config, const UiStreamConfig& stream_co
 
 void ApplicationUI::shutdown()
 {
-    if (_web_frame_texture != 0)
-    {
-        glDeleteTextures(1, &_web_frame_texture);
-        _web_frame_texture = 0;
-    }
-
-    if (_loopback_frame_texture != 0)
-    {
-        glDeleteTextures(1, &_loopback_frame_texture);
-        _loopback_frame_texture = 0;
-    }
-
     if (_window)
     {
-        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplDX11_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
+        CleanupDeviceD3D();
+        
         glfwDestroyWindow(_window);
         glfwTerminate();
         _window = nullptr;
@@ -94,7 +92,8 @@ bool ApplicationUI::render()
         return false; 
 
     glfwPollEvents();
-    ImGui_ImplOpenGL3_NewFrame();
+
+    ImGui_ImplDX11_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
@@ -110,16 +109,14 @@ bool ApplicationUI::render()
     ImGui::Begin("MainLayout", nullptr, flags);
     ImGui::PopStyleVar();
 
-    float log_height = 150.0f;
+    float log_height = 100.0f;
     ImGui::BeginChild("TabsRegion", ImVec2(0, -log_height), true);
     if (ImGui::BeginTabBar("MainTabs")) 
     {
         if (ImGui::BeginTabItem("Broadcaster")) { render_broadcaster_tab(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Viewer (Web)")) { render_web_preview_tab(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Viewer (Loopback)")) { render_loopback_preview_tab(); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
-    
     ImGui::EndChild();
 
     render_log_window();
@@ -127,23 +124,21 @@ bool ApplicationUI::render()
     ImGui::End();
     ImGui::Render();
 
-    int display_w, display_h;
-    glfwGetFramebufferSize(_window, &display_w, &display_h);
-    glViewport(0, 0, display_w, display_h);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    const float clear_color_with_alpha[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+    _pd3dDeviceContext->OMSetRenderTargets(1, &_mainRenderTargetView, nullptr);
+    _pd3dDeviceContext->ClearRenderTargetView(_mainRenderTargetView, clear_color_with_alpha);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-    glfwSwapBuffers(_window);
+    _pSwapChain->Present(1, 0);
 
     return true;
 }
 
 bool ApplicationUI::render_broadcaster_tab()
 {
-    ImGui::BeginChild("SettingsRegion", ImVec2(0, -60), true);
-
-    if (ImGui::CollapsingHeader("Capture & Encoding Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    ImGui::BeginChild("BroadcasterSettings", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0), false);
+    
+    if (ImGui::CollapsingHeader("Capture & Encoding", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::BeginDisabled(is_ui_locked(UiElement::STREAM_CONFIG));
         render_capture_settings();
@@ -158,84 +153,58 @@ bool ApplicationUI::render_broadcaster_tab()
         ImGui::EndDisabled();
     }
 
-    if (ImGui::CollapsingHeader("Network Receiver (Rx)", ImGuiTreeNodeFlags_DefaultOpen))
+    ImGui::Spacing();
+    if (!is_ui_locked(UiElement::STREAM_CONFIG))
     {
-        ImGui::BeginDisabled(is_ui_locked(UiElement::RX_CONFIG));
-        render_network_rx_settings();
-        ImGui::EndDisabled();
+        if (ImGui::Button("Start Broadcast", ImVec2(-1, 40)))
+            if (_start_stop_stream_callback) _start_stop_stream_callback();
     }
-
+    else
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Stop Broadcast", ImVec2(-1, 40)))
+            if (_start_stop_stream_callback) _start_stop_stream_callback();
+        ImGui::PopStyleColor();
+    }
     ImGui::EndChild();
 
-    render_action_buttons();
+    ImGui::SameLine();
+
+    ImGui::BeginChild("LoopbackPreviewRegion", ImVec2(0, 0), true);
+    ImGui::SeparatorText("Loopback Preview");
+
+    _loopback_preview_widget.render(_loopback_srv, _loopback_w, _loopback_h, 0.0f);
+    
+    ImGui::EndChild();
 
     return true;
 }
 
 bool ApplicationUI::render_web_preview_tab()
 {
-    if (!_web_frame)
-        return false;
-
-    if (!_web_frame->empty())
-        _web_frame_texture = mat_to_texture(*_web_frame, _web_frame_texture);
-    
-    if (_web_frame_texture != 0)
+    if (ImGui::CollapsingHeader("Receiver Configuration (Rx)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        float aspect_ratio = (float)_web_frame->cols / (float)_web_frame->rows;
-        ImVec2 avail_size = ImGui::GetContentRegionAvail();
-        
-        float draw_width = avail_size.x;
-        float draw_height = draw_width / aspect_ratio;
+        ImGui::BeginDisabled(is_ui_locked(UiElement::RX_CONFIG));
+        render_network_rx_settings();
+        ImGui::EndDisabled();
 
-        if (draw_height > avail_size.y)
+        ImGui::Spacing();
+        if (!is_ui_locked(UiElement::RX_CONFIG))
         {
-            draw_height = avail_size.y;
-            draw_width = draw_height * aspect_ratio;
+            if (ImGui::Button("Connect to Stream", ImVec2(200, 30)))
+                if (_start_stop_rx_callback) _start_stop_rx_callback();
         }
-
-        ImVec2 cursor_pos = ImGui::GetCursorPos();
-        ImGui::SetCursorPosX(cursor_pos.x + (avail_size.x - draw_width) * 0.5f);
-        ImGui::SetCursorPosY(cursor_pos.y + (avail_size.y - draw_height) * 0.5f);
-
-        ImGui::Image((ImTextureID)(intptr_t)_web_frame_texture, ImVec2(draw_width, draw_height));
-    }
-    else
-        ImGui::Text("Waiting for video stream...");
-
-    return true;
-}
-
-bool ApplicationUI::render_loopback_preview_tab()
-{
-    if (!_loopback_frame)
-        return false;
-
-    if (!_loopback_frame->empty())
-        _loopback_frame_texture = mat_to_texture(*_loopback_frame, _loopback_frame_texture);
-    
-    if (_loopback_frame_texture != 0)
-    {
-        float aspect_ratio = (float)_loopback_frame->cols / (float)_loopback_frame->rows;
-        ImVec2 avail_size = ImGui::GetContentRegionAvail();
-        
-        float draw_width = avail_size.x;
-        float draw_height = draw_width / aspect_ratio;
-
-        if (draw_height > avail_size.y)
+        else
         {
-            draw_height = avail_size.y;
-            draw_width = draw_height * aspect_ratio;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            if (ImGui::Button("Disconnect", ImVec2(200, 30)))
+                if (_start_stop_rx_callback) _start_stop_rx_callback();
+            ImGui::PopStyleColor();
         }
-
-        ImVec2 cursor_pos = ImGui::GetCursorPos();
-        ImGui::SetCursorPosX(cursor_pos.x + (avail_size.x - draw_width) * 0.5f);
-        ImGui::SetCursorPosY(cursor_pos.y + (avail_size.y - draw_height) * 0.5f);
-
-        ImGui::Image((ImTextureID)(intptr_t)_loopback_frame_texture, ImVec2(draw_width, draw_height));
     }
-    else
-        ImGui::Text("Waiting for video stream...");
+
+    ImGui::SeparatorText("Live Stream");
+    _web_preview_widget.render(_web_srv, _web_w, _web_h, 0.0f);
 
     return true;
 }
@@ -308,45 +277,6 @@ void ApplicationUI::render_network_rx_settings()
     InputTextString("Password##rx", _network_config_rx.stream_pwd, ImGuiInputTextFlags_Password);
 }
 
-void ApplicationUI::render_action_buttons()
-{
-    if (!is_ui_locked(UiElement::STREAM_CONFIG))
-    {
-        if (ImGui::Button("Start Broadcast (Tx)", ImVec2(180, 40)))
-            if (_start_stop_stream_callback) 
-                _start_stop_stream_callback();
-    }
-    else
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button("Stop Broadcast", ImVec2(180, 40)))
-            if (_start_stop_stream_callback) 
-                _start_stop_stream_callback();
-
-        ImGui::PopStyleColor(2);
-    }
-
-    ImGui::SameLine();
-
-    if (!is_ui_locked(UiElement::RX_CONFIG))
-    {
-        if (ImGui::Button("Start Preview (Rx)", ImVec2(180, 40)))
-            if (_start_stop_rx_callback) 
-                _start_stop_rx_callback();
-    }
-    else
-    {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button("Stop Preview", ImVec2(180, 40)))
-            if (_start_stop_rx_callback) 
-                _start_stop_rx_callback();
-
-        ImGui::PopStyleColor(2);
-    }
-}
-
 void ApplicationUI::render_log_window()
 {
     ImGui::Separator();
@@ -377,6 +307,60 @@ void ApplicationUI::render_log_window()
 
     ImGui::PopStyleVar();
     ImGui::EndChild();
+}
+
+bool ApplicationUI::CreateDeviceD3D(HWND hWnd)
+{
+    DXGI_SWAP_CHAIN_DESC sd;
+    ZeroMemory(&sd, sizeof(sd));
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.SampleDesc.Quality = 0;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+    
+    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &_pSwapChain, &_pd3dDevice, &featureLevel, &_pd3dDeviceContext);
+    
+    if (res == DXGI_ERROR_UNSUPPORTED) // Fallback for WARP
+        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &_pSwapChain, &_pd3dDevice, &featureLevel, &_pd3dDeviceContext);
+    if (res != S_OK)
+        return false;
+
+    CreateRenderTarget();
+    return true;
+}
+
+void ApplicationUI::CleanupDeviceD3D()
+{
+    CleanupRenderTarget();
+    if (_pSwapChain) { _pSwapChain->Release(); _pSwapChain = nullptr; }
+    if (_pd3dDeviceContext) { _pd3dDeviceContext->Release(); _pd3dDeviceContext = nullptr; }
+    if (_pd3dDevice) { _pd3dDevice->Release(); _pd3dDevice = nullptr; }
+}
+
+void ApplicationUI::CreateRenderTarget()
+{
+    ID3D11Texture2D* pBackBuffer;
+    _pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    _pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &_mainRenderTargetView);
+    pBackBuffer->Release();
+}
+
+void ApplicationUI::CleanupRenderTarget()
+{
+    if (_mainRenderTargetView) { _mainRenderTargetView->Release(); _mainRenderTargetView = nullptr; }
 }
 
 void ApplicationUI::log(const std::string& message) 
