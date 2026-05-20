@@ -89,6 +89,7 @@ bool SrtTransmitter::close_connection()
 bool SrtTransmitter::send(const std::vector<uint8_t>& data) 
 {
     static constexpr size_t MAX_PAYLOAD_SIZE_BYTES = 1316;
+    // TODO: Might also be good to add check is bytes cout divisable by 188
 
     std::lock_guard<std::mutex> lock(_send_mutex);
 

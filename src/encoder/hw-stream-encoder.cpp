@@ -6,13 +6,13 @@
 bool HwStreamEncoder::init(const EncoderConfig& config)
 {
     _config = config;
-    _frame_pts = 0;
-
     return true;
 }
 
 bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* texture)
 {
+    _start_time = std::chrono::steady_clock::now();
+
     if (nullptr == texture || nullptr == device)
     {
         LOG_ERROR("Received NULL D3D11 device or texture!\n");
@@ -89,23 +89,29 @@ bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* te
 
     _codec_context->width = width;
     _codec_context->height = height;
-    _codec_context->time_base = { 1, static_cast<int>(_config.fps) };
+    _codec_context->time_base = { 1, 1000 }; // 1 ms
     _codec_context->framerate = { static_cast<int>(_config.fps), 1 };
+
+    // _codec_context->time_base = { 1, static_cast<int>(_config.fps) };
+    // _codec_context->framerate = { static_cast<int>(_config.fps), 1 };
     
     _codec_context->pix_fmt = AV_PIX_FMT_D3D11; 
     _codec_context->hw_device_ctx = av_buffer_ref(_hw_device_ctx);
     _codec_context->hw_frames_ctx = av_buffer_ref(hw_frames_ref); 
     _codec_context->bit_rate = _config.bitrate_kbps * 1000;
+    _codec_context->rc_max_rate = _config.bitrate_kbps * 1000;
+    _codec_context->rc_buffer_size = _config.bitrate_kbps * 1000 * 2; // 2 seconds
 
     _codec_context->gop_size = static_cast<int>(_config.fps); 
     _codec_context->max_b_frames = 0;
-    _codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    // _codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     av_opt_set(_codec_context->priv_data, "profile", "main", 0);
     if (StreamCodec::H264_NVEC == _config.codec) 
     {
         av_opt_set(_codec_context->priv_data, "preset", "p1", 0);
         av_opt_set(_codec_context->priv_data, "tune", "ull", 0);
+        av_opt_set(_codec_context->priv_data, "rc", "cbr", 0);
     }
     else if (StreamCodec::H264_AMF == _config.codec) 
     {
@@ -143,6 +149,8 @@ bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* te
     }
 
     av_opt_set(_format_context->priv_data, "mpegts_flags", "resend_headers", 0);
+    av_opt_set(_format_context->priv_data, "pat_pmt_at_frames", "1", 0);
+    av_opt_set(_format_context->priv_data, "sdt_period", "250", 0);
 
     _video_stream = avformat_new_stream(_format_context, nullptr);
     if (!_video_stream)
@@ -151,6 +159,9 @@ bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* te
         return false;
     }
 
+    _video_stream->time_base = { 1, 1000 }; // 1 ms
+    // _video_stream->time_base = {1, static_cast<int>(_config.fps)};
+
     const int param_copy_err = avcodec_parameters_from_context(_video_stream->codecpar, _codec_context);
     if (param_copy_err < 0)
     {
@@ -158,8 +169,7 @@ bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* te
         return false;
     }
 
-    const int avio_ctx_buffer_size = 8192;
-    _avio_buffer = static_cast<uint8_t*>(av_malloc(avio_ctx_buffer_size));
+    _avio_buffer = static_cast<uint8_t*>(av_malloc(static_cast<int>(AVIO_CTX_BUFFER_SIZE)));
     if (!_avio_buffer)
     {
         LOG_ERROR("Failed to allocate avio buffer\n");
@@ -167,7 +177,7 @@ bool HwStreamEncoder::first_frame_init(ID3D11Device* device, ID3D11Texture2D* te
     }
 
     _avio_context = avio_alloc_context(
-        _avio_buffer, avio_ctx_buffer_size, 1, 
+        _avio_buffer, static_cast<int>(AVIO_CTX_BUFFER_SIZE), 1, 
         &_muxed_data,
         nullptr, &HwStreamEncoder::avio_write_packet, nullptr
     );
@@ -238,7 +248,9 @@ bool HwStreamEncoder::encode_texture(ID3D11Texture2D* texture, ID3D11Device* dev
     context->CopyResource(ffmpeg_tex, texture);
     context->Release();
 
-    _hw_frame->pts = _frame_pts++;
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - _start_time).count();
+    _hw_frame->pts = static_cast<int64_t>(elapsed_ms);
 
     const int send_frame_err = avcodec_send_frame(_codec_context, _hw_frame);
     if (send_frame_err < 0) 
@@ -249,10 +261,9 @@ bool HwStreamEncoder::encode_texture(ID3D11Texture2D* texture, ID3D11Device* dev
         return false;
     }
 
-    int receive_packet_res = 0;
-    while (receive_packet_res >= 0)
+    while (true)
     {
-        receive_packet_res = avcodec_receive_packet(_codec_context, _packet);
+        const int receive_packet_res = avcodec_receive_packet(_codec_context, _packet);
         if (receive_packet_res == AVERROR(EAGAIN) || receive_packet_res == AVERROR_EOF) 
             break; 
         else if (receive_packet_res < 0) 
@@ -264,7 +275,8 @@ bool HwStreamEncoder::encode_texture(ID3D11Texture2D* texture, ID3D11Device* dev
         av_packet_rescale_ts(_packet, _codec_context->time_base, _video_stream->time_base);
         _packet->stream_index = _video_stream->index;
 
-        av_interleaved_write_frame(_format_context, _packet);        
+        // av_interleaved_write_frame(_format_context, _packet);
+        av_write_frame(_format_context, _packet); // write without audio for now        
         avio_flush(_format_context->pb);
 
         av_packet_unref(_packet);

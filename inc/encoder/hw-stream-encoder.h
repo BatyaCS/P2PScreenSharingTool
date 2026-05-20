@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <string>
+#include <chrono>
 
 EXTERN_C_START
 #include <libavcodec/avcodec.h>
@@ -17,6 +18,8 @@ EXTERN_C_END
 
 class HwStreamEncoder : NonCopyable
 {
+    static constexpr size_t AVIO_CTX_BUFFER_SIZE = 16384;
+
 public:
     enum class StreamCodec
     {
@@ -59,9 +62,10 @@ private:
     AVStream *              _video_stream = nullptr;
     AVIOContext *           _avio_context = nullptr;
     uint8_t *               _avio_buffer = nullptr;
-    std::vector<uint8_t>    _muxed_data; 
+    std::vector<uint8_t>    _muxed_data;
 
-    uint                    _frame_pts = 0;
+    std::chrono::steady_clock::time_point _start_time;
+
     bool                    _is_first_frame_received = false;
 };
 
