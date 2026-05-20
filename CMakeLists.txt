@@ -55,6 +55,7 @@ set(APP_SOURCES
     "src/decoder/stream-decoder.cpp"
     "src/ui/application-ui.cpp"
     
+    "src/network/srt-receiver.cpp"
     "src/network/srt-transmitter.cpp"
     "src/network/srt-environment.cpp"
 
