@@ -28,7 +28,7 @@
 #endif
 
 #ifdef __cplusplus
-enum class LogKind { NV_ERROR, NV_LOG, GENERIC }; // here need to select something not used to avoid collisions ...
+enum class LogKind { NV_ERROR, NV_LOG, GENERIC };
 #else
 typedef enum { LOG_KIND_NV_ERROR, LOG_KING_NV_LOG, LOG_KIND_GENERIC } LogKind;
 #endif
