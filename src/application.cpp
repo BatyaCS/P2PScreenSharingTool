@@ -9,22 +9,15 @@
 #include <thread>
 #include <chrono>
 
-static const ApplicationUI::UiConfig default_ui_config = 
+static const AppViewModel::StreamConfig default_ui_stream_cfg = 
 {
-    .window_title = "Batya Streamer",
-    .width = 1280,
-    .height = 720
-};
-
-static const ApplicationUI::UiStreamConfig default_ui_stream_cfg = 
-{
-    .capture_target = ApplicationUI::UiStreamConfig::CaptureTarget::DISPLAY,
-    .stream_target  = ApplicationUI::UiStreamConfig::StreamTarget::LOOPBACK,
+    .capture_target = AppViewModel::StreamConfig::CaptureTarget::DISPLAY,
+    .stream_target  = AppViewModel::StreamConfig::StreamTarget::LOOPBACK,
     .target_fps     = 30,
     .target_br_kbps = 2500
 };
 
-static const ApplicationUI::UiNetworkConfigRx default_ui_network_config_rx = 
+static const AppViewModel::NetworkConfigRx default_ui_network_config_rx = 
 {
     .stream_id = "mystream",
     .user_name = "viewer",
@@ -34,7 +27,7 @@ static const ApplicationUI::UiNetworkConfigRx default_ui_network_config_rx =
     .server_port = 8890
 };
 
-static const ApplicationUI::UiNetworkConfigTx default_ui_network_config_tx = 
+static const AppViewModel::NetworkConfigTx default_ui_network_config_tx = 
 {
     .stream_id = "mystream",
     .user_name = "streamer",
@@ -46,9 +39,32 @@ static const ApplicationUI::UiNetworkConfigTx default_ui_network_config_tx =
 
 bool Application::init()
 {
-    if (!_ui.init(default_ui_config, default_ui_stream_cfg, default_ui_network_config_rx, default_ui_network_config_tx))
+    if (!glfwInit())
     {
-        std::cerr << "Failed to initialize the UI!\n";
+        LOG_ERROR("Failed to initialize GLFW!\n");
+        return false;
+    }
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    
+    // TODO: Add config for glfw window
+    _window = glfwCreateWindow(1280, 720, "Batya Streamer", nullptr, nullptr);
+    if (!_window) 
+    {
+        LOG_ERROR("Failed to create GLFW window!\n");
+        glfwTerminate();
+        return false;
+    }
+
+    if (!_gfx.init(_window))
+    {
+        LOG_ERROR("Failed to initialize GraphicsContext!\n");
+        return false;
+    }
+
+    if (!_ui.init(_window, &_gfx))
+    {
+        LOG_ERROR("Failed to initialize ApplicationUI!\n");
         return false;
     }
 
@@ -56,12 +72,22 @@ bool Application::init()
     _ui.set_start_stop_rx_callback([this]() { this->handle_start_stop_preview(); });
     _ui.set_sources_update_callback([this]() { this->handle_sources_update(); });
 
+    _model.stream_config = default_ui_stream_cfg;
+    _model.network_tx = default_ui_network_config_tx;
+    _model.network_rx = default_ui_network_config_rx;
+
     return true;
 }
 
 void Application::cleanup()
 {
-    _ui.shutdown();
+    if (_window)
+    {
+        glfwDestroyWindow(_window);
+        glfwTerminate();
+
+        _window = nullptr;
+    }
 }
 
 void Application::run()
@@ -71,22 +97,22 @@ void Application::run()
 
     LOG("Application started!\n");
 
-    while (running)
+    while (!glfwWindowShouldClose(_window))
     {
-        if (_is_preview_enabled && _decoder.has_error())
+        glfwPollEvents();
+
+        if (_model.is_watching && _decoder.has_error())
         {
-            _ui.log_err("Preview stopped due to error!");
+            LOG_ERROR("Preview stopped due to error!\n");
             stop_preview();
         }
 
-        if (_is_stream_enabled && !_srt_sender.is_connected())
+        if (_model.is_broadcasting && !_srt_sender.is_connected())
         {
-            const ApplicationUI::UiStreamConfig& stream_cfg = _ui.fetch_stream_config();
-            const bool is_web_stream = ApplicationUI::UiStreamConfig::StreamTarget::WEB == stream_cfg.stream_target;
-
+            const bool is_web_stream = AppViewModel::StreamConfig::StreamTarget::WEB == _model.stream_config.stream_target;
             if (is_web_stream && !_srt_sender.is_connected())
             {
-                _ui.log_err("Stream disconnected!");
+                LOG_ERROR("Stream disconnected!\n");
                 stop_streaming();
             }
         }
@@ -101,7 +127,7 @@ void Application::run()
             _ui.set_web_texture(reinterpret_cast<void*>(_current_preview_srv), _preview_w, _loopback_h);
         }
 
-        running = _ui.render();
+        _ui.render(_model);
 
         if (_loopback_srv_to_release)
         {
@@ -119,15 +145,15 @@ void Application::run()
 
 bool Application::start_streaming()
 {
-    const ApplicationUI::UiStreamConfig& stream_cfg = _ui.fetch_stream_config();
-    const bool is_web_stream = ApplicationUI::UiStreamConfig::StreamTarget::WEB == stream_cfg.stream_target;
+    const AppViewModel::StreamConfig& stream_cfg = _model.stream_config;
+    const bool is_web_stream = AppViewModel::StreamConfig::StreamTarget::WEB == _model.stream_config.stream_target;
 
-    _ui.log(std::format("Starting stream with {} kbps at {} FPS.", stream_cfg.target_br_kbps, stream_cfg.target_fps));
+    LOG("Starting stream with %u kbps at %u FPS!\n", stream_cfg.target_br_kbps, stream_cfg.target_fps);
 
     HwVideoCapturer::CaptureConfig cap_cfg;
     cap_cfg.target = HwVideoCapturer::Target::DISPLAY;
     cap_cfg.target_fps = stream_cfg.target_fps;
-    cap_cfg.source_name = stream_cfg.source;
+    cap_cfg.source_name = stream_cfg.capture_sources.empty() ? "" : stream_cfg.capture_sources.at(stream_cfg.selected_source_idx);
 
     if (is_web_stream)
     {
@@ -137,7 +163,7 @@ bool Application::start_streaming()
         enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
         _encoder.init(enc_cfg);
 
-        const ApplicationUI::UiNetworkConfigTx& network_cfg_tx = _ui.fetch_network_tx_config();
+        const AppViewModel::NetworkConfigTx& network_cfg_tx = _model.network_tx;
         const std::string stream_id = std::format("publish:{}:{}:{}", 
                                                 network_cfg_tx.stream_id,
                                                 network_cfg_tx.user_name, 
@@ -151,7 +177,7 @@ bool Application::start_streaming()
 
         if (!_srt_sender.open_connection(network_cfg))
         {
-            _ui.log_err("Failed to initialize SRT Sender!");
+            LOG_ERROR("Failed to initialize SRT Sender!\n");
             stop_streaming();
 
             return false;
@@ -160,16 +186,13 @@ bool Application::start_streaming()
 
     if (!_capturer.start(cap_cfg, [this](ID3D11Texture2D* tex, ID3D11Device* dev) { this->handle_frame_captured(tex, dev); }))
     {
-        _ui.log_err("Failed to start video capturer loop!\n");
+        LOG_ERROR("Failed to start video capturer loop!\n");
         stop_streaming();
 
         return false;
     }
 
-    _ui.log("Video Streaming started\n");
-    _ui.set_ui_locked(ApplicationUI::UiElement::STREAM_CONFIG, true);
-
-    _is_stream_enabled = true;
+    LOG("Video Streaming started\n");
     return true;
 }
 
@@ -192,52 +215,42 @@ void Application::stop_streaming()
         _loopback_w = 0;
     }
     
-    _ui.log("Video Streaming stopped\n");
-    _ui.set_ui_locked(ApplicationUI::UiElement::STREAM_CONFIG, false);
-
-    _is_stream_enabled = false;
+    LOG("Video Streaming stopped\n");
 }
 
 bool Application::start_preview()
 {
-    const ApplicationUI::UiNetworkConfigRx& rx_cfg = _ui.fetch_network_rx_config();    
-    _ui.log(std::format("Starting Rx preview on {}:{}", rx_cfg.server_ip, rx_cfg.server_port));
+    const AppViewModel::NetworkConfigRx& rx_cfg = _model.network_rx;
+    LOG("Starting Rx preview on %s:%u!\n", rx_cfg.server_ip.c_str(), rx_cfg.server_port);
 
-        const std::string stream_id = std::format("read:{}:{}:{}", 
-                                                rx_cfg.stream_id,
-                                                rx_cfg.user_name, 
-                                                rx_cfg.user_pwd);
-        
-        SrtReceiver::NetworkConfig network_cfg;
-        network_cfg.ip = rx_cfg.server_ip;
-        network_cfg.port = rx_cfg.server_port;
-        network_cfg.pass_phrase = rx_cfg.srt_passphrase;
-        network_cfg.stream_id = stream_id;
+    const std::string stream_id = std::format("read:{}:{}:{}", rx_cfg.stream_id, rx_cfg.user_name, rx_cfg.user_pwd);
+    SrtReceiver::NetworkConfig network_cfg;
+    network_cfg.ip = rx_cfg.server_ip;
+    network_cfg.port = rx_cfg.server_port;
+    network_cfg.pass_phrase = rx_cfg.srt_passphrase;
+    network_cfg.stream_id = stream_id;
 
     if (!_srt_receiver.open_connection(network_cfg))
     {
-        _ui.log_err("Failed to open SRT Receiver connection!");
+        LOG_ERROR("Failed to open SRT Receiver connection!\n");
         return false;
     }
 
     if (!_decoder.init(
-        _ui.get_d3d11_device(), 
+        _gfx.get_device(), 
         [this](ID3D11Texture2D* tex, ID3D11Device* dev) { this->handle_frame_received(tex, dev); },
         [](AVFrame* frame) { /* Zero callback for audio */ }
     ))
     {
-        _ui.log_err("Failed to init Hardware Decoder!");
+        LOG_ERROR("Failed to init Hardware Decoder!\n");
         _srt_receiver.close_connection();
         return false;
     }
 
-    _ui.log("Video Preview (Rx) started\n");
-    _ui.set_ui_locked(ApplicationUI::UiElement::RX_CONFIG, true);
-    _is_preview_enabled = true;
-
     _is_rx_running = true;
     _rx_thread = std::thread(&Application::srt_rx_loop, this);
 
+    LOG("Video Preview (Rx) started\n");
     return true;
 }
 
@@ -262,19 +275,14 @@ void Application::stop_preview()
         _preview_w = 0;
     }
 
-    _ui.log("Video Preview (Rx) stopped\n");
-    _ui.set_ui_locked(ApplicationUI::UiElement::RX_CONFIG, false);
-    
-    _is_preview_enabled = false;
+    LOG("Video Preview (Rx) stopped\n");
 }
 
 void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
-    const bool is_loopback = StreamTarget::LOOPBACK == _ui.fetch_stream_config().stream_target;
+    const bool is_web_stream = AppViewModel::StreamConfig::StreamTarget::WEB == _model.stream_config.stream_target;
 
-    if (is_loopback)
-        save_frame_for_loopback(tex, dev);
-    else
+    if (is_web_stream)
     {
         std::vector<uint8_t> mpegts_data;
         if (!_encoder.encode_texture(tex, dev, mpegts_data))
@@ -290,6 +298,8 @@ void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
         else
             LTRACE("MPEGTS data is empty!\n");
     }
+    else
+        save_frame_for_loopback(tex, dev);
 }
 
 void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
@@ -402,39 +412,59 @@ void Application::save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* de
 
 void Application::handle_start_stop_stream()
 {
-    if (_is_stream_enabled)
-        return stop_streaming();
-    
-    start_streaming();
+    const bool is_active = _model.is_broadcasting.load();
+
+    if (!is_active)
+    {   
+        if (!start_streaming())
+            return;
+
+        _model.is_broadcasting = true;
+    }
+    else
+    {
+        stop_streaming();
+        _model.is_broadcasting = false;
+    }
 }
 
 void Application::handle_start_stop_preview()
 {
-    if (_is_preview_enabled)
-        return stop_preview();
+    const bool is_active = _model.is_watching.load();
     
-    start_preview();
+    if (!is_active)
+    {   
+        if (!start_preview())
+            return;
+
+        _model.is_watching = true;
+    }
+    else
+    {
+        stop_preview();
+        _model.is_watching = false;
+    }
 }
 
 void Application::handle_sources_update()
 {
-    const ApplicationUI::UiStreamConfig& cfg = _ui.fetch_stream_config();
-    std::vector<std::string> ui_sources;
-        
-    if (ApplicationUI::UiStreamConfig::CaptureTarget::WINDOW == cfg.capture_target)
+    AppViewModel::StreamConfig& cfg = _model.stream_config;
+    
+    cfg.capture_sources.clear();
+    cfg.selected_source_idx = 0;
+    
+    if (AppViewModel::StreamConfig::CaptureTarget::WINDOW == cfg.capture_target)
     {
         auto windows = HwVideoCapturer::get_available_windows();
         for (const auto& w : windows)
-            ui_sources.push_back(w.Name);
+            cfg.capture_sources.push_back(w.Name);
     }
     else
     {
         auto monitors = HwVideoCapturer::get_available_monitors();
         for (const auto& m : monitors)
-            ui_sources.push_back(m.Name);
+            cfg.capture_sources.push_back(m.Name);
     }
-
-    _ui.set_stream_sources(ui_sources);
 }
 
 void Application::srt_rx_loop()

@@ -2,6 +2,9 @@
 #define APPLICATION_H_
 
 #include <ui/application-ui.h>
+#include <model/app-view-model.h>
+#include <graphics/graphics-context.h>
+#include <GLFW/glfw3.h>
 
 #include <network/srt-receiver.h>
 #include <network/srt-transmitter.h>
@@ -26,8 +29,6 @@ public:
     void run();
 
 private:
-    using StreamTarget = ApplicationUI::UiStreamConfig::StreamTarget;
-
     bool start_streaming();
     void stop_streaming();
 
@@ -46,6 +47,9 @@ private:
 
     void srt_rx_loop();
 
+    GLFWwindow *    _window = nullptr;
+    AppViewModel    _model;
+    GraphicsContext _gfx;
     ApplicationUI   _ui;
 
     HwVideoCapturer _capturer;    
@@ -69,9 +73,6 @@ private:
 
     std::thread       _rx_thread;
     std::atomic<bool> _is_rx_running{false};
-
-    bool            _is_stream_enabled = false;
-    bool            _is_preview_enabled = false;
 };
 
 #endif /* APPLICATION_H_ */
