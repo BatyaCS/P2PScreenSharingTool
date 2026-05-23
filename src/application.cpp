@@ -96,8 +96,6 @@ void Application::run()
     handle_sources_update();
     bool running = true;
 
-    LOG("Application started!\n");
-
     while (!glfwWindowShouldClose(_window))
     {
         glfwPollEvents();
@@ -118,29 +116,15 @@ void Application::run()
             }
         }
 
-        {
-            std::lock_guard<std::mutex> lock(_loopback_mutex);
-            _ui.set_loopback_texture(reinterpret_cast<void*>(_current_loopback_srv), _loopback_w, _loopback_h);
-        }
+        const AppViewModel::FrameSize loopback_size = _model.loopback_frame_size.load();
+        if (loopback_size.width > 0 && loopback_size.height > 0)
+            _model.loopback_texture.resize(_gfx.get_device(), loopback_size.width, loopback_size.height);
 
-        {
-            std::lock_guard<std::mutex> lock(_preview_mutex);
-            _ui.set_web_texture(reinterpret_cast<void*>(_current_preview_srv), _preview_w, _loopback_h);
-        }
+        const AppViewModel::FrameSize preview_size = _model.preview_frame_size.load();
+        if (preview_size.width > 0 && preview_size.height > 0)
+            _model.preview_texture.resize(_gfx.get_device(), preview_size.width, preview_size.height);
 
         _ui.render(_model);
-
-        if (_loopback_srv_to_release)
-        {
-            _loopback_srv_to_release->Release();
-            _loopback_srv_to_release = nullptr;
-        }
-
-        if (_preview_srv_to_release)
-        {
-            _preview_srv_to_release->Release();
-            _preview_srv_to_release = nullptr;
-        }
     }
 }
 
@@ -202,19 +186,6 @@ void Application::stop_streaming()
     _capturer.stop();
     _encoder.release();
     _srt_sender.close_connection();
-
-    {
-        std::lock_guard<std::mutex> lock(_loopback_mutex);
-        
-        if (_current_loopback_srv) 
-        {
-            _loopback_srv_to_release = _current_loopback_srv; 
-            _current_loopback_srv = nullptr; 
-        }
-
-        _loopback_h = 0;
-        _loopback_w = 0;
-    }
     
     LOG("Video Streaming stopped\n");
 }
@@ -264,18 +235,6 @@ void Application::stop_preview()
     _srt_receiver.close_connection();
     _decoder.release();
 
-    {
-        std::lock_guard<std::mutex> lock(_preview_mutex);
-        if (_current_preview_srv) 
-        {
-            _preview_srv_to_release = _current_preview_srv; 
-            _current_preview_srv = nullptr; 
-        }
-
-        _preview_h = 0;
-        _preview_w = 0;
-    }
-
     LOG("Video Preview (Rx) stopped\n");
 }
 
@@ -303,112 +262,68 @@ void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
         save_frame_for_loopback(tex, dev);
 }
 
+
+#include <graphics/yuv-to-rgb-converter.h>
+YuvToRgbConverter converter;
+
 void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
-    if (!tex || !dev)
+    if (!tex)
         return;
+
+    if (dev != _gfx.get_device()) 
+    {
+        LOG_ERROR("Device mismatch!\n");
+        return; 
+    }
+
+    D3D11_TEXTURE2D_DESC tmp_desc;
+    tex->GetDesc(&tmp_desc);
+
+    LOG("Received tex, format: %u!\n", static_cast<uint>(tmp_desc.Format));
+
+    ID3D11Texture2D* rgba_tex = converter.convert(dev, tex);
+    if (!rgba_tex)
+    {
+        LOG_ERROR("Failed to convert YUV to RGBA!\n");
+        return;
+    }
 
     D3D11_TEXTURE2D_DESC desc;
-    tex->GetDesc(&desc);
-
-    LOG("SRT Frame received width:%u, height:%u!\n", desc.Width, desc.Height);
-
-    D3D11_TEXTURE2D_DESC ui_desc = desc;
-    ui_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; 
-    ui_desc.Usage = D3D11_USAGE_DEFAULT;
-    ui_desc.CPUAccessFlags = 0;
-    ui_desc.MiscFlags = 0;
-    ui_desc.ArraySize = 1; 
-
-    ID3D11Texture2D* ui_texture = nullptr;
-    const HRESULT hr_tex = dev->CreateTexture2D(&ui_desc, nullptr, &ui_texture);
-    if (FAILED(hr_tex)) 
-    {
-        LOG_ERROR("Failed to create 2D D3D11 texture!\n");
-        return;
-    }
-
-    ID3D11DeviceContext* ctx = nullptr;
-    dev->GetImmediateContext(&ctx);
-    if (ctx)
-    {
-        ctx->CopySubresourceRegion(ui_texture, 0, 0, 0, 0, tex, 0, nullptr);
-        ctx->Release();
-    }
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-    srv_desc.Format = DXGI_FORMAT_R8_UNORM; // Читаем только канал яркости (Y-plane)
-    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srv_desc.Texture2D.MostDetailedMip = 0;
-    srv_desc.Texture2D.MipLevels = 1;
-
-    ID3D11ShaderResourceView* new_srv = nullptr;
-    const HRESULT hr = dev->CreateShaderResourceView(ui_texture, &srv_desc, &new_srv);
+    rgba_tex->GetDesc(&desc);
     
-    ui_texture->Release(); 
-
-    if (FAILED(hr) || nullptr == new_srv) 
-    {
-        LOG_ERROR("Failed to create shader resource view!\n");
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(_preview_mutex);
-        if (_current_preview_srv)
-            _current_preview_srv->Release();
-        
-        _current_preview_srv = new_srv;
-        _preview_w = desc.Width;
-        _preview_h = desc.Height;
-    }
+    ID3D11DeviceContext* ctx = _gfx.get_context();
+    _model.preview_frame_size.store({desc.Width, desc.Height});
+    _model.preview_texture.copy_from(ctx, rgba_tex);
 }
+
+#include <graphics/cross-device-bridge.h>
+CrossDeviceTextureBridge bridge;
 
 void Application::save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
-    if (!tex || !dev)
+    if (!tex)
         return;
 
+    ID3D11Texture2D* my_tex = bridge.transfer(dev, tex, _gfx.get_device());
+    if (!my_tex)
+    {
+        LOG_ERROR("CrossDevice bridge failed to transfer texture!\n");
+        return; 
+    }
+
+    // if (dev != _gfx.get_device()) 
+    // {
+    //     LOG_ERROR("Device mismatch!\n");
+    //     return; 
+    // }
+
     D3D11_TEXTURE2D_DESC desc;
-    tex->GetDesc(&desc);
-
-    D3D11_TEXTURE2D_DESC ui_desc = desc;
-    ui_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; 
-    ui_desc.Usage = D3D11_USAGE_DEFAULT;
-    ui_desc.CPUAccessFlags = 0;
-    ui_desc.MiscFlags = 0;
-
-    ID3D11Texture2D* ui_texture = nullptr;
-    HRESULT hr = dev->CreateTexture2D(&ui_desc, nullptr, &ui_texture);
-    if (FAILED(hr)) 
-        return; 
-
-    ID3D11DeviceContext* ctx = nullptr;
-    dev->GetImmediateContext(&ctx);
-    if (ctx)
-    {
-        ctx->CopyResource(ui_texture, tex);
-        ctx->Release();
-    }
-
-    ID3D11ShaderResourceView* new_srv = nullptr;
-    hr = dev->CreateShaderResourceView(ui_texture, nullptr, &new_srv);
+    my_tex->GetDesc(&desc);
     
-    ui_texture->Release(); 
-
-    if (FAILED(hr)) 
-        return; 
-
-    {
-        std::lock_guard<std::mutex> lock(_loopback_mutex);
-        
-        if (_current_loopback_srv)
-            _current_loopback_srv->Release();
-        
-        _current_loopback_srv = new_srv;
-        _loopback_w = desc.Width;
-        _loopback_h = desc.Height;
-    }
+    ID3D11DeviceContext* ctx = _gfx.get_context();
+    _model.loopback_frame_size.store({desc.Width, desc.Height});
+    _model.loopback_texture.copy_from(ctx, my_tex);
 }
 
 void Application::handle_start_stop_stream()
