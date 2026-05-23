@@ -1,17 +1,14 @@
 #include <common.h>
 #include <ui/application-ui.h>
 #include <ui/ui-helpers.h>
+#include <graphics/graphics-context.h>
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_dx11.h>
+#include <GLFW/glfw3.h>
+
 #include <iostream>
-
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
-
-#include <d3d11_4.h>
-
 static bool InputTextString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) 
 {
     char buf[256];
@@ -24,45 +21,16 @@ static bool InputTextString(const char* label, std::string& str, ImGuiInputTextF
     return false;
 }
 
-bool ApplicationUI::init(const UiConfig& config)
+bool ApplicationUI::init(GLFWwindow * window, GraphicsContext * gfx)
 {
-    if (!glfwInit())
+    if (!window || !gfx)
     {
-        LOG_ERROR("Failed to init glfw!\n");
-
+        LOG_ERROR("Received invalid dependencies GLFWwindow or GraphicsContext!\n");
         return false;
     }
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    
-    _window = glfwCreateWindow(config.width, config.height, config.window_title.c_str(), nullptr, nullptr);
-    if (!_window) 
-    {
-        LOG_ERROR("Failed to init glfw window!\n");
-
-        glfwTerminate(); 
-        return false; 
-    }
-
-    if (!CreateDeviceD3D(glfwGetWin32Window(_window)))
-    {
-        LOG_ERROR("Failed to create d3d11 device!\n");
-
-        CleanupDeviceD3D();
-        glfwDestroyWindow(_window);
-        glfwTerminate();
-        return false;
-    }
-
-
-    // Use multithread protection since pd3dDevice used by HwDecoder
-    ID3D11Multithread * multithread = nullptr;
-    const HRESULT hr = _pd3dDevice->QueryInterface(__uuidof(ID3D11Multithread), (void**)&multithread);
-    if (SUCCEEDED(hr) && multithread)
-    {
-        multithread->SetMultithreadProtected(TRUE); 
-        multithread->Release();
-    }
+    _window = window;
+    _gfx = gfx;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -71,7 +39,7 @@ bool ApplicationUI::init(const UiConfig& config)
     ImGui::StyleColorsDark();
 
     ImGui_ImplGlfw_InitForOther(_window, true);
-    ImGui_ImplDX11_Init(_pd3dDevice, _pd3dDeviceContext);
+    ImGui_ImplDX11_Init(_gfx->get_device(), _gfx->get_context());
 
     return true;
 }
@@ -83,22 +51,14 @@ void ApplicationUI::shutdown()
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
-
-        CleanupDeviceD3D();
         
-        glfwDestroyWindow(_window);
-        glfwTerminate();
         _window = nullptr;
+        _gfx = nullptr;
     }
 }
 
 bool ApplicationUI::render(AppViewModel& view)
 {
-    if (glfwWindowShouldClose(_window)) 
-        return false; 
-
-    glfwPollEvents();
-
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -130,12 +90,11 @@ bool ApplicationUI::render(AppViewModel& view)
     ImGui::End();
     ImGui::Render();
 
-    const float clear_color_with_alpha[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
-    _pd3dDeviceContext->OMSetRenderTargets(1, &_mainRenderTargetView, nullptr);
-    _pd3dDeviceContext->ClearRenderTargetView(_mainRenderTargetView, clear_color_with_alpha);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    const GraphicsContext::Colors clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
+    _gfx->clear_render_target(clear_color);
 
-    _pSwapChain->Present(1, 0);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    _gfx->present();
 
     return true;
 }
@@ -288,9 +247,9 @@ void ApplicationUI::render_log_window(AppViewModel& view)
     }
 
     ImGui::BeginChild("LogScrollingRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
-    
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1)); 
     
+    std::lock_guard<std::mutex> lock(view.logs_mutex);
     for (const auto& log : view.logs) 
     {
         if (LogKind::NV_ERROR == log.level) 
@@ -311,58 +270,4 @@ void ApplicationUI::render_log_window(AppViewModel& view)
 
     ImGui::PopStyleVar();
     ImGui::EndChild();
-}
-
-bool ApplicationUI::CreateDeviceD3D(HWND hWnd)
-{
-    DXGI_SWAP_CHAIN_DESC sd;
-    ZeroMemory(&sd, sizeof(sd));
-    sd.BufferCount = 2;
-    sd.BufferDesc.Width = 0;
-    sd.BufferDesc.Height = 0;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate.Numerator = 60;
-    sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hWnd;
-    sd.SampleDesc.Count = 1;
-    sd.SampleDesc.Quality = 0;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    UINT createDeviceFlags = 0;
-    D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
-    
-    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &_pSwapChain, &_pd3dDevice, &featureLevel, &_pd3dDeviceContext);
-    
-    if (res == DXGI_ERROR_UNSUPPORTED) // Fallback for WARP
-        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &_pSwapChain, &_pd3dDevice, &featureLevel, &_pd3dDeviceContext);
-    if (res != S_OK)
-        return false;
-
-    CreateRenderTarget();
-    return true;
-}
-
-void ApplicationUI::CleanupDeviceD3D()
-{
-    CleanupRenderTarget();
-    if (_pSwapChain) { _pSwapChain->Release(); _pSwapChain = nullptr; }
-    if (_pd3dDeviceContext) { _pd3dDeviceContext->Release(); _pd3dDeviceContext = nullptr; }
-    if (_pd3dDevice) { _pd3dDevice->Release(); _pd3dDevice = nullptr; }
-}
-
-void ApplicationUI::CreateRenderTarget()
-{
-    ID3D11Texture2D* pBackBuffer;
-    _pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    _pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &_mainRenderTargetView);
-    pBackBuffer->Release();
-}
-
-void ApplicationUI::CleanupRenderTarget()
-{
-    if (_mainRenderTargetView) { _mainRenderTargetView->Release(); _mainRenderTargetView = nullptr; }
 }

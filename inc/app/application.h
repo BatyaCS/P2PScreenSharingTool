@@ -3,6 +3,8 @@
 
 #include <ui/application-ui.h>
 #include <model/app-view-model.h>
+#include <graphics/graphics-context.h>
+#include <GLFW/glfw3.h>
 
 #include <network/srt-receiver.h>
 #include <network/srt-transmitter.h>
@@ -45,8 +47,10 @@ private:
 
     void srt_rx_loop();
 
-    ApplicationUI   _ui;
+    GLFWwindow *    _window = nullptr;
     AppViewModel    _model;
+    GraphicsContext _gfx;
+    ApplicationUI   _ui;
 
     HwVideoCapturer _capturer;    
     HwStreamEncoder _encoder;

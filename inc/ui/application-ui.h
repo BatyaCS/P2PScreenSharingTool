@@ -5,8 +5,8 @@
 #include <model/app-view-model.h>
 #include <functional>
 
-#include <GLFW/glfw3.h>
-#include <d3d11.h>
+struct GLFWwindow;
+class GraphicsContext;
 
 class ApplicationUI
 {
@@ -17,14 +17,6 @@ class ApplicationUI
     static constexpr uint TARGET_BITRATE_MAX = 10000;
 
 public:
-    struct UiConfig
-    {
-        std::string window_title;
-
-        uint width;
-        uint height;
-    };
-
     using StartStopStreamCallback = std::function<void()>;
     using StartStopRxCallback = std::function<void()>;
     using SourcesUpdateCallback = std::function<void()>;
@@ -34,10 +26,8 @@ public:
 
     bool render(AppViewModel& view);
 
-    bool init(const UiConfig& config);
+    bool init(GLFWwindow * window, GraphicsContext * gfx);
     void shutdown();
-
-    ID3D11Device* get_d3d11_device() const { return _pd3dDevice; }
 
     void set_web_texture(void * srv, uint w, uint h) { _web_srv = srv; _web_w = w; _web_h = h; }
     void set_loopback_texture(void * srv, uint w, uint h) { _loopback_srv = srv; _loopback_w = w; _loopback_h = h; }
@@ -57,20 +47,13 @@ private:
 
     void render_log_window(AppViewModel& view);
 
-    bool CreateDeviceD3D(HWND hWnd);
-    void CleanupDeviceD3D();
-    void CreateRenderTarget();
-    void CleanupRenderTarget();
-
     GLFWwindow *                _window = nullptr;
-    ID3D11Device *              _pd3dDevice = nullptr;
-    ID3D11DeviceContext *       _pd3dDeviceContext = nullptr;
-    IDXGISwapChain *            _pSwapChain = nullptr;
-    ID3D11RenderTargetView *    _mainRenderTargetView = nullptr;
+    GraphicsContext *           _gfx = nullptr;
 
     VideoPreviewWidget          _web_preview_widget;
     VideoPreviewWidget          _loopback_preview_widget;
 
+    // TODO: remove textures from here, should be gathered from AppViewModel
     void *                      _web_srv = nullptr;
     void *                      _loopback_srv = nullptr;
 

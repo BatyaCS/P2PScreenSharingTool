@@ -54,6 +54,7 @@ set(APP_SOURCES
     "src/ui/application-ui.cpp"
     "src/model/app-models.cpp"
     "src/model/app-view-model.cpp"
+    "src/graphics/graphics-context.cpp"
     
     "src/network/srt-receiver.cpp"
     "src/network/srt-transmitter.cpp"

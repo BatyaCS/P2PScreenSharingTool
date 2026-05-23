@@ -9,13 +9,6 @@
 #include <thread>
 #include <chrono>
 
-static const ApplicationUI::UiConfig default_ui_config = 
-{
-    .window_title = "Batya Streamer",
-    .width = 1280,
-    .height = 720
-};
-
 static const AppViewModel::StreamConfig default_ui_stream_cfg = 
 {
     .capture_target = AppViewModel::StreamConfig::CaptureTarget::DISPLAY,
@@ -46,9 +39,32 @@ static const AppViewModel::NetworkConfigTx default_ui_network_config_tx =
 
 bool Application::init()
 {
-    if (!_ui.init(default_ui_config))
+    if (!glfwInit())
     {
-        std::cerr << "Failed to initialize the UI!\n";
+        LOG_ERROR("Failed to initialize GLFW!\n");
+        return false;
+    }
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    
+    // TODO: Add config for glfw window
+    _window = glfwCreateWindow(1280, 720, "Batya Streamer", nullptr, nullptr);
+    if (!_window) 
+    {
+        LOG_ERROR("Failed to create GLFW window!\n");
+        glfwTerminate();
+        return false;
+    }
+
+    if (!_gfx.init(_window))
+    {
+        LOG_ERROR("Failed to initialize GraphicsContext!\n");
+        return false;
+    }
+
+    if (!_ui.init(_window, &_gfx))
+    {
+        LOG_ERROR("Failed to initialize ApplicationUI!\n");
         return false;
     }
 
@@ -65,7 +81,13 @@ bool Application::init()
 
 void Application::cleanup()
 {
-    _ui.shutdown();
+    if (_window)
+    {
+        glfwDestroyWindow(_window);
+        glfwTerminate();
+
+        _window = nullptr;
+    }
 }
 
 void Application::run()
@@ -75,8 +97,10 @@ void Application::run()
 
     LOG("Application started!\n");
 
-    while (running)
+    while (!glfwWindowShouldClose(_window))
     {
+        glfwPollEvents();
+
         if (_model.is_watching && _decoder.has_error())
         {
             LOG_ERROR("Preview stopped due to error!\n");
@@ -103,7 +127,7 @@ void Application::run()
             _ui.set_web_texture(reinterpret_cast<void*>(_current_preview_srv), _preview_w, _loopback_h);
         }
 
-        running = _ui.render(_model);
+        _ui.render(_model);
 
         if (_loopback_srv_to_release)
         {
@@ -169,8 +193,6 @@ bool Application::start_streaming()
     }
 
     LOG("Video Streaming started\n");
-
-    _model.is_broadcasting = true;
     return true;
 }
 
@@ -194,7 +216,6 @@ void Application::stop_streaming()
     }
     
     LOG("Video Streaming stopped\n");
-    _model.is_broadcasting = false;
 }
 
 bool Application::start_preview()
@@ -216,7 +237,7 @@ bool Application::start_preview()
     }
 
     if (!_decoder.init(
-        _ui.get_d3d11_device(), 
+        _gfx.get_device(), 
         [this](ID3D11Texture2D* tex, ID3D11Device* dev) { this->handle_frame_received(tex, dev); },
         [](AVFrame* frame) { /* Zero callback for audio */ }
     ))
@@ -226,12 +247,10 @@ bool Application::start_preview()
         return false;
     }
 
-    LOG("Video Preview (Rx) started\n");
-    _model.is_watching = true;
-
     _is_rx_running = true;
     _rx_thread = std::thread(&Application::srt_rx_loop, this);
 
+    LOG("Video Preview (Rx) started\n");
     return true;
 }
 
@@ -257,7 +276,6 @@ void Application::stop_preview()
     }
 
     LOG("Video Preview (Rx) stopped\n");
-    _model.is_watching = false;
 }
 
 void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
@@ -394,18 +412,38 @@ void Application::save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* de
 
 void Application::handle_start_stop_stream()
 {
-    if (_model.is_broadcasting)
-        return stop_streaming();
-    
-    start_streaming();
+    const bool is_active = _model.is_broadcasting.load();
+
+    if (!is_active)
+    {   
+        if (!start_streaming())
+            return;
+
+        _model.is_broadcasting = true;
+    }
+    else
+    {
+        stop_streaming();
+        _model.is_broadcasting = false;
+    }
 }
 
 void Application::handle_start_stop_preview()
 {
-    if (_model.is_watching)
-        return stop_preview();
+    const bool is_active = _model.is_watching.load();
     
-    start_preview();
+    if (!is_active)
+    {   
+        if (!start_preview())
+            return;
+
+        _model.is_watching = true;
+    }
+    else
+    {
+        stop_preview();
+        _model.is_watching = false;
+    }
 }
 
 void Application::handle_sources_update()
