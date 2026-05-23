@@ -24,7 +24,7 @@ static bool InputTextString(const char* label, std::string& str, ImGuiInputTextF
     return false;
 }
 
-bool ApplicationUI::init(const UiConfig& config, const UiStreamConfig& stream_config, const UiNetworkConfigRx& config_rx, const UiNetworkConfigTx& config_tx)
+bool ApplicationUI::init(const UiConfig& config)
 {
     if (!glfwInit())
     {
@@ -73,12 +73,6 @@ bool ApplicationUI::init(const UiConfig& config, const UiStreamConfig& stream_co
     ImGui_ImplGlfw_InitForOther(_window, true);
     ImGui_ImplDX11_Init(_pd3dDevice, _pd3dDeviceContext);
 
-    _stream_config = stream_config;
-    _previous_stream_config = stream_config;
-
-    _network_config_rx = config_rx;
-    _network_config_tx = config_tx;
-
     return true;
 }
 
@@ -98,7 +92,7 @@ void ApplicationUI::shutdown()
     }
 }
 
-bool ApplicationUI::render()
+bool ApplicationUI::render(AppViewModel& view)
 {
     if (glfwWindowShouldClose(_window)) 
         return false; 
@@ -125,13 +119,13 @@ bool ApplicationUI::render()
     ImGui::BeginChild("TabsRegion", ImVec2(0, -log_height), true);
     if (ImGui::BeginTabBar("MainTabs")) 
     {
-        if (ImGui::BeginTabItem("Broadcaster")) { render_broadcaster_tab(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Viewer (Web)")) { render_web_preview_tab(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Broadcaster")) { render_broadcaster_tab(view); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Viewer (Web)")) { render_web_preview_tab(view); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
     ImGui::EndChild();
 
-    render_log_window();
+    render_log_window(view);
 
     ImGui::End();
     ImGui::Render();
@@ -146,27 +140,27 @@ bool ApplicationUI::render()
     return true;
 }
 
-bool ApplicationUI::render_broadcaster_tab()
+bool ApplicationUI::render_broadcaster_tab(AppViewModel& view)
 {
     ImGui::BeginChild("BroadcasterSettings", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0), false);
     
     if (ImGui::CollapsingHeader("Capture & Encoding", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::BeginDisabled(is_ui_locked(UiElement::STREAM_CONFIG));
-        render_capture_settings();
-        render_encoding_settings();
+        ImGui::BeginDisabled(view.is_broadcasting);
+        render_capture_settings(view);
+        render_encoding_settings(view);
         ImGui::EndDisabled();
     }
 
     if (ImGui::CollapsingHeader("Network Transmission (Tx)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::BeginDisabled(is_ui_locked(UiElement::STREAM_CONFIG));
-        render_network_tx_settings();
+        ImGui::BeginDisabled(view.is_broadcasting);
+        render_network_tx_settings(view);
         ImGui::EndDisabled();
     }
 
     ImGui::Spacing();
-    if (!is_ui_locked(UiElement::STREAM_CONFIG))
+    if (!view.is_broadcasting)
     {
         if (ImGui::Button("Start Broadcast", ImVec2(-1, 40)))
             if (_start_stop_stream_callback) _start_stop_stream_callback();
@@ -192,16 +186,16 @@ bool ApplicationUI::render_broadcaster_tab()
     return true;
 }
 
-bool ApplicationUI::render_web_preview_tab()
+bool ApplicationUI::render_web_preview_tab(AppViewModel& view)
 {
     if (ImGui::CollapsingHeader("Receiver Configuration (Rx)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::BeginDisabled(is_ui_locked(UiElement::RX_CONFIG));
-        render_network_rx_settings();
+        ImGui::BeginDisabled(view.is_watching);
+        render_network_rx_settings(view);
         ImGui::EndDisabled();
 
         ImGui::Spacing();
-        if (!is_ui_locked(UiElement::RX_CONFIG))
+        if (!view.is_watching)
         {
             if (ImGui::Button("Connect to Stream", ImVec2(200, 30)))
                 if (_start_stop_rx_callback) _start_stop_rx_callback();
@@ -221,38 +215,28 @@ bool ApplicationUI::render_web_preview_tab()
     return true;
 }
 
-void ApplicationUI::render_capture_settings()
+void ApplicationUI::render_capture_settings(AppViewModel& view)
 {
     ImGui::Text("Capture Source / Stream Target");
     ImGui::Spacing();
 
-    ImGui::RadioButton("Monitor", reinterpret_cast<int*>(&_stream_config.capture_target), 0); 
+    ImGui::RadioButton("Monitor", reinterpret_cast<int*>(&view.stream_config.capture_target), 0); 
     // ImGui::SameLine(); ImGui::RadioButton("Application", reinterpret_cast<int*>(&_stream_config.capture_target), 1);
 
-    ImGui::RadioButton("WebSRT", reinterpret_cast<int*>(&_stream_config.stream_target), 0); ImGui::SameLine();
-    ImGui::RadioButton("Loopback", reinterpret_cast<int*>(&_stream_config.stream_target), 1);
+    ImGui::RadioButton("WebSRT", reinterpret_cast<int*>(&view.stream_config.stream_target), 0); ImGui::SameLine();
+    ImGui::RadioButton("Loopback", reinterpret_cast<int*>(&view.stream_config.stream_target), 1);
 
-    if (_stream_config.capture_target != _previous_stream_config.capture_target)
-    {
-        if (_sources_update_callback) 
-            _sources_update_callback();
-
-        _previous_stream_config = _stream_config;
-    }
-
-    const std::string combo_label = (_stream_config.capture_target == UiStreamConfig::CaptureTarget::DISPLAY) ? "Select Display" : "Select Window";
-    const std::string preview_value = _current_sources.empty() ? "None found" : _current_sources[_selected_source];
+    const std::string combo_label = (view.stream_config.capture_target == AppViewModel::StreamConfig::CaptureTarget::DISPLAY) ? "Select Display" : "Select Window";
+    const std::string preview_value = view.stream_config.capture_sources.empty() ? "None found" 
+                                                                                 : view.stream_config.capture_sources[view.stream_config.selected_source_idx];
     
     if (ImGui::BeginCombo(combo_label.c_str(), preview_value.c_str()))
     {
-        for (uint idx = 0; idx < _current_sources.size(); idx++)
+        for (uint idx = 0; idx < view.stream_config.capture_sources.size(); idx++)
         {
-            const bool is_selected = _selected_source == idx;
-            if (ImGui::Selectable(_current_sources[idx].c_str(), is_selected))
-            {
-                _stream_config.source = _current_sources[idx];
-                _selected_source = idx;
-            }
+            const bool is_selected = view.stream_config.selected_source_idx == idx;
+            if (ImGui::Selectable(view.stream_config.capture_sources[idx].c_str(), is_selected))
+                view.stream_config.selected_source_idx = idx;
 
             if (is_selected) 
                 ImGui::SetItemDefaultFocus();
@@ -265,58 +249,62 @@ void ApplicationUI::render_capture_settings()
             _sources_update_callback();
 }
 
-void ApplicationUI::render_encoding_settings()
+void ApplicationUI::render_encoding_settings(AppViewModel& view)
 {
     ImGui::Spacing();
     ImGui::Text("Encoding Settings");
-    ImGui::SliderInt("Target FPS", reinterpret_cast<int*>(&_stream_config.target_fps), TARGET_FPS_MIN, TARGET_FPS_MAX);
-    ImGui::SliderInt("Bitrate (kbps)", reinterpret_cast<int*>(&_stream_config.target_br_kbps), TARGET_BITRATE_MIN, TARGET_BITRATE_MAX);
+    ImGui::SliderInt("Target FPS", reinterpret_cast<int*>(&view.stream_config.target_fps), TARGET_FPS_MIN, TARGET_FPS_MAX);
+    ImGui::SliderInt("Bitrate (kbps)", reinterpret_cast<int*>(&view.stream_config.target_br_kbps), TARGET_BITRATE_MIN, TARGET_BITRATE_MAX);
 }
 
-void ApplicationUI::render_network_tx_settings()
+void ApplicationUI::render_network_tx_settings(AppViewModel& view)
 {
-    InputTextString("Stream ID", _network_config_tx.stream_id);
-    InputTextString("User Name", _network_config_tx.user_name);
-    InputTextString("User Pwd", _network_config_tx.user_pwd, ImGuiInputTextFlags_Password);
-    InputTextString("SRT Passphrase", _network_config_tx.srt_passphrase, ImGuiInputTextFlags_Password);
-    InputTextString("Server IP", _network_config_tx.server_ip);
-    ImGui::InputInt("Server Port", reinterpret_cast<int*>(&_network_config_tx.server_port));
+    InputTextString("Stream ID", view.network_tx.stream_id);
+    InputTextString("User Name", view.network_tx.user_name);
+    InputTextString("User Pwd", view.network_tx.user_pwd, ImGuiInputTextFlags_Password);
+    InputTextString("SRT Passphrase", view.network_tx.srt_passphrase, ImGuiInputTextFlags_Password);
+    InputTextString("Server IP", view.network_tx.server_ip);
+    ImGui::InputInt("Server Port", reinterpret_cast<int*>(&view.network_tx.server_port));
 }
 
-void ApplicationUI::render_network_rx_settings()
+void ApplicationUI::render_network_rx_settings(AppViewModel& view)
 {
-    InputTextString("Stream ID", _network_config_rx.stream_id);
-    InputTextString("User Name", _network_config_rx.user_name);
-    InputTextString("User Pwd", _network_config_rx.user_pwd, ImGuiInputTextFlags_Password);
-    InputTextString("SRT Passphrase", _network_config_rx.srt_passphrase, ImGuiInputTextFlags_Password);
-    InputTextString("Server IP", _network_config_rx.server_ip);
-    ImGui::InputInt("Server Port", reinterpret_cast<int*>(&_network_config_rx.server_port));
+    InputTextString("Stream ID", view.network_rx.stream_id);
+    InputTextString("User Name", view.network_rx.user_name);
+    InputTextString("User Pwd", view.network_rx.user_pwd, ImGuiInputTextFlags_Password);
+    InputTextString("SRT Passphrase", view.network_rx.srt_passphrase, ImGuiInputTextFlags_Password);
+    InputTextString("Server IP", view.network_rx.server_ip);
+    ImGui::InputInt("Server Port", reinterpret_cast<int*>(&view.network_rx.server_port));
 }
 
-void ApplicationUI::render_log_window()
+void ApplicationUI::render_log_window(AppViewModel& view)
 {
     ImGui::Separator();
     ImGui::Text("Application Logs");
     ImGui::SameLine();
     if (ImGui::SmallButton("Clear")) 
-        { _logs.clear(); }
+    { 
+        // TODO: add callback for logs clearing 
+    }
 
     ImGui::BeginChild("LogScrollingRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
     
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1)); 
     
-    for (const auto& log : _logs) 
+    for (const auto& log : view.logs) 
     {
-        if (log.is_error) 
+        if (LogKind::NV_ERROR == log.level) 
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
             ImGui::TextUnformatted(log.text.c_str());
             ImGui::PopStyleColor();
-        } else 
+        } 
+        else 
             ImGui::TextUnformatted(log.text.c_str());
     }
 
-    if (_scroll_to_bottom) {
+    if (_scroll_to_bottom) 
+    {
         ImGui::SetScrollHereY(1.0f);
         _scroll_to_bottom = false;
     }
@@ -377,35 +365,4 @@ void ApplicationUI::CreateRenderTarget()
 void ApplicationUI::CleanupRenderTarget()
 {
     if (_mainRenderTargetView) { _mainRenderTargetView->Release(); _mainRenderTargetView = nullptr; }
-}
-
-void ApplicationUI::log(const std::string& message) 
-{
-    _logs.push_back({get_current_timestamp() + message, false});
-
-    if (_logs.size() > 100) 
-        _logs.erase(_logs.begin());
-
-    _scroll_to_bottom = true;
-}
-
-void ApplicationUI::log_err(const std::string& message) 
-{
-    _logs.push_back({get_current_timestamp() + message, true});
-
-    if (_logs.size() > 100) 
-        _logs.erase(_logs.begin());
-
-    _scroll_to_bottom = true;
-}
-
-std::string ApplicationUI::get_current_timestamp() const
-{
-    time_t now = time(0);
-    tm *ltm = localtime(&now);
-
-    char time_str[32];
-    strftime(time_str, sizeof(time_str), "[%H:%M:%S] ", ltm);
-    
-    return std::string(time_str);
 }
