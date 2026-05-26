@@ -242,8 +242,10 @@ void HwStreamDecoder::decode_loop()
                     if (_frame->format == AV_PIX_FMT_D3D11)
                     {
                         ID3D11Texture2D* tex = reinterpret_cast<ID3D11Texture2D*>(_frame->data[0]);
+                        const uint slice_index = static_cast<uint>(reinterpret_cast<intptr_t>(_frame->data[1]));
+
                         if (_video_callback && tex)
-                            _video_callback(tex, _d3d11_device);
+                            _video_callback(tex, _d3d11_device, slice_index);
                     }
                     else
                         LOG_ERROR("Warning: Received software frame instead of D3D11! Skipping...\n");

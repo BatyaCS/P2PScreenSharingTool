@@ -190,7 +190,7 @@ bool Application::start_preview()
 
     if (!_decoder.init(
         _gfx.get_device(), 
-        [this](ID3D11Texture2D* tex, ID3D11Device* dev) { this->handle_frame_received(tex, dev); },
+        [this](ID3D11Texture2D* tex, ID3D11Device* dev, uint slice_index) { this->handle_frame_received(tex, dev, slice_index); },
         [](AVFrame* frame) { /* Zero callback for audio */ }
     ))
     {
@@ -242,7 +242,7 @@ void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
         save_frame_for_loopback(tex, dev);
 }
 
-void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
+void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev, uint slice_index)
 {
     if (!tex)
         return;
@@ -253,7 +253,7 @@ void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
         return; 
     }
 
-    ID3D11Texture2D * rgba_tex = _yuv_rgb_converter.convert(dev, tex);
+    ID3D11Texture2D * rgba_tex = _yuv_rgb_converter.convert(dev, tex, slice_index);
     if (!rgba_tex)
         return;
 

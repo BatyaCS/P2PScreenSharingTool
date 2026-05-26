@@ -12,7 +12,7 @@ public:
     ~YuvRgbConverter() = default;
 
     // NV12 to RGBA
-    ID3D11Texture2D * convert(ID3D11Device * dev, ID3D11Texture2D * tex);
+    ID3D11Texture2D * convert(ID3D11Device * dev, ID3D11Texture2D * tex, uint slice_index);
 
 private:
     bool init_video_processor(ID3D11Device * dev, uint width, uint height);

@@ -1,7 +1,7 @@
 #include <common.h>
 #include <graphics/yuv-rgb-converter.h>
 
-ID3D11Texture2D * YuvRgbConverter::convert(ID3D11Device * dev, ID3D11Texture2D * tex)
+ID3D11Texture2D * YuvRgbConverter::convert(ID3D11Device * dev, ID3D11Texture2D * tex, uint slice_index)
 {
     if (!dev || !tex) 
         return nullptr;
@@ -29,7 +29,7 @@ ID3D11Texture2D * YuvRgbConverter::convert(ID3D11Device * dev, ID3D11Texture2D *
     in_desc.FourCC = 0;
     in_desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
     in_desc.Texture2D.MipSlice = 0;
-    in_desc.Texture2D.ArraySlice = 0;
+    in_desc.Texture2D.ArraySlice = slice_index;
 
     Microsoft::WRL::ComPtr<ID3D11VideoProcessorInputView> input_view;
     HRESULT hr = _video_device->CreateVideoProcessorInputView(tex, _video_enum.Get(), &in_desc, &input_view);

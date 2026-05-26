@@ -40,7 +40,7 @@ private:
     void stop_preview();
 
     void handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev);
-    void handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev);
+    void handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev, uint slice_index);
 
     void save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* dev);
 

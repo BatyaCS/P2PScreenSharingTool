@@ -24,7 +24,7 @@ class HwStreamDecoder : NonCopyable
     static constexpr size_t AVIO_CTX_BUFFER_SIZE = 16384;
 
 public:
-    using VideoFrameCallback = std::function<void(ID3D11Texture2D*, ID3D11Device*)>;
+    using VideoFrameCallback = std::function<void(ID3D11Texture2D*, ID3D11Device*, uint)>;
     using AudioFrameCallback = std::function<void(AVFrame*)>;
 
     HwStreamDecoder() = default;
