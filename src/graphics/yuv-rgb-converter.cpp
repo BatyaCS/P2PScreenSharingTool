@@ -43,6 +43,16 @@ ID3D11Texture2D * YuvRgbConverter::convert(ID3D11Device * dev, ID3D11Texture2D *
     stream.Enable = TRUE;
     stream.pInputSurface = input_view.Get();
 
+    // Set to convert YUV limited (16-235) to full rgb (0-255)
+    D3D11_VIDEO_PROCESSOR_COLOR_SPACE color_space = {};
+    color_space.RGB_Range = 0;
+    color_space.YCbCr_Matrix = 1;
+    color_space.YCbCr_xvYCC = 0;
+    color_space.Nominal_Range = 1;
+
+    video_ctx->VideoProcessorSetStreamColorSpace(_video_processor.Get(), 0, &color_space);
+    video_ctx->VideoProcessorSetOutputColorSpace(_video_processor.Get(), &color_space);
+
     // convert NV12 to RGBA
     hr = video_ctx->VideoProcessorBlt(_video_processor.Get(), _output_view.Get(), 0, 1, &stream);
     if (FAILED(hr))
