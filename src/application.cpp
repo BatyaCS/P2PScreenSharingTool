@@ -9,6 +9,9 @@
 #include <thread>
 #include <chrono>
 
+#include <filesystem>
+#include <fstream>
+
 static const AppViewModel::StreamConfig default_ui_stream_cfg = 
 {
     .capture_target = AppViewModel::StreamConfig::CaptureTarget::DISPLAY,
@@ -91,6 +94,7 @@ bool Application::init()
     _model.stream_config = default_ui_stream_cfg;
     _model.network_tx = default_ui_network_config_tx;
     _model.network_rx = default_ui_network_config_rx;
+    load_configs();
 
     return true;
 }
@@ -104,6 +108,8 @@ void Application::cleanup()
 
         _window = nullptr;
     }
+
+    save_configs();
 }
 
 void Application::run()
@@ -247,6 +253,72 @@ void Application::stop_preview()
     _decoder.release();
 
     LOG("Video Preview (Rx) stopped\n");
+}
+
+void Application::load_configs()
+{
+    using json = nlohmann::json;
+
+    const std::filesystem::path full_path = std::filesystem::path(CONFIG_DIR) / CONFIG_FILE;
+    if (!std::filesystem::exists(full_path))
+    {
+        LOG("Config file not found, starting with default settings\n");
+        return;
+    }
+
+    std::ifstream file(full_path);
+    if (!file.is_open())
+    {
+        LOG_ERROR("Failed to open config file for reading!\n");
+        return;
+    }
+
+    try
+    {
+        json j;
+        file >> j;
+
+        if (j.contains("transmitter"))
+            _model.network_tx = j["transmitter"].get<AppModels::NetworkConfigTx>();
+            
+        if (j.contains("receiver"))
+            _model.network_rx = j["receiver"].get<AppModels::NetworkConfigRx>();
+
+        LOG("Network configs loaded.\n");
+    }
+    catch (const json::exception& e)
+    {
+        LOG_ERROR("JSON Parse Error: %s\n", e.what());
+    }
+}
+
+void Application::save_configs() const
+{
+    using json = nlohmann::json;
+    if (!std::filesystem::exists(CONFIG_DIR))
+        std::filesystem::create_directories(CONFIG_DIR);
+
+    const std::filesystem::path full_path = std::filesystem::path(CONFIG_DIR) / CONFIG_FILE;
+    std::ofstream file(full_path);
+    if (!file.is_open())
+    {
+        LOG_ERROR("Failed to open config file for writing!\n");
+        return;
+    }
+
+    try
+    {
+        json j;
+        j["transmitter"] = _model.network_tx;
+        j["receiver"] = _model.network_rx;
+
+        file << j.dump(4); 
+        LOG("Network configs saved\n");
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("Failed to save configs: %s\n", e.what());
+    }
 }
 
 void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)

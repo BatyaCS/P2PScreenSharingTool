@@ -22,6 +22,9 @@
 
 class Application
 {
+    static constexpr std::string_view CONFIG_DIR{"saved_files"};
+    static constexpr std::string_view CONFIG_FILE{"saved_network_configs.json"};
+
 public:
     Application() = default;
     ~Application() { cleanup(); }
@@ -40,6 +43,9 @@ private:
 
     bool start_preview();
     void stop_preview();
+
+    void load_configs();
+    void save_configs() const;
 
     void handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev);
     void handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev, uint slice_index);

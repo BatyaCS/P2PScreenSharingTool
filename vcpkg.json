@@ -26,6 +26,9 @@
     },
     {
       "name": "libsrt"
+    },
+    {
+      "name": "nlohmann-json"
     }
   ]
 }
