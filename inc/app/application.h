@@ -3,8 +3,11 @@
 
 #include <ui/application-ui.h>
 #include <model/app-view-model.h>
-#include <graphics/graphics-context.h>
 #include <GLFW/glfw3.h>
+
+#include <graphics/graphics-context.h>
+#include <graphics/cross-device-bridge.h>
+#include <graphics/yuv-rgb-converter.h>
 
 #include <network/srt-receiver.h>
 #include <network/srt-transmitter.h>
@@ -49,20 +52,26 @@ private:
 
     void srt_rx_loop();
 
-    GLFWwindow *        _window = nullptr;
-    AppViewModel        _model;
-    GraphicsContext     _gfx;
-    ApplicationUI       _ui;
+    static SrtReceiver::NetworkConfig to_srt_network_cfg(const AppModels::NetworkConfigRx& cfg);
+    static SrtTransmitter::NetworkConfig to_srt_network_cfg(const AppModels::NetworkConfigTx& cfg);
 
-    HwVideoCapturer     _capturer;    
-    HwStreamEncoder     _encoder;
-    HwStreamDecoder     _decoder;
+    GLFWwindow *                _window = nullptr;
+    AppViewModel                _model;
+    GraphicsContext             _gfx;
+    ApplicationUI               _ui;
+
+    CrossDeviceTextureBridge    _gfx_bridge;
+    YuvRgbConverter             _yuv_rgb_converter;
+
+    HwVideoCapturer             _capturer;    
+    HwStreamEncoder             _encoder;
+    HwStreamDecoder             _decoder;
     
-    SrtTransmitter      _srt_sender;
-    SrtReceiver         _srt_receiver;
+    SrtTransmitter              _srt_sender;
+    SrtReceiver                 _srt_receiver;
 
-    std::thread         _rx_thread;
-    std::atomic<bool>   _is_rx_running{false};
+    std::thread                 _rx_thread;
+    std::atomic<bool>           _is_rx_running{false};
 };
 
 #endif /* APPLICATION_H_ */

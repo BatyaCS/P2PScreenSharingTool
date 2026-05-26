@@ -148,19 +148,8 @@ bool Application::start_streaming()
         enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
         _encoder.init(enc_cfg);
 
-        const AppViewModel::NetworkConfigTx& network_cfg_tx = _model.network_tx;
-        const std::string stream_id = std::format("publish:{}:{}:{}", 
-                                                network_cfg_tx.stream_id,
-                                                network_cfg_tx.user_name, 
-                                                network_cfg_tx.user_pwd);
-        
-        SrtTransmitter::NetworkConfig network_cfg;
-        network_cfg.ip = network_cfg_tx.server_ip;
-        network_cfg.port = network_cfg_tx.server_port;
-        network_cfg.pass_phrase = network_cfg_tx.srt_passphrase;
-        network_cfg.stream_id = stream_id;
-
-        if (!_srt_sender.open_connection(network_cfg))
+        const SrtTransmitter::NetworkConfig cfg = to_srt_network_cfg(_model.network_tx);
+        if (!_srt_sender.open_connection(cfg))
         {
             LOG_ERROR("Failed to initialize SRT Sender!\n");
             stop_streaming();
@@ -192,17 +181,8 @@ void Application::stop_streaming()
 
 bool Application::start_preview()
 {
-    const AppViewModel::NetworkConfigRx& rx_cfg = _model.network_rx;
-    LOG("Starting Rx preview on %s:%u!\n", rx_cfg.server_ip.c_str(), rx_cfg.server_port);
-
-    const std::string stream_id = std::format("read:{}:{}:{}", rx_cfg.stream_id, rx_cfg.user_name, rx_cfg.user_pwd);
-    SrtReceiver::NetworkConfig network_cfg;
-    network_cfg.ip = rx_cfg.server_ip;
-    network_cfg.port = rx_cfg.server_port;
-    network_cfg.pass_phrase = rx_cfg.srt_passphrase;
-    network_cfg.stream_id = stream_id;
-
-    if (!_srt_receiver.open_connection(network_cfg))
+    const SrtReceiver::NetworkConfig cfg = to_srt_network_cfg(_model.network_rx);
+    if (!_srt_receiver.open_connection(cfg))
     {
         LOG_ERROR("Failed to open SRT Receiver connection!\n");
         return false;
@@ -222,7 +202,7 @@ bool Application::start_preview()
     _is_rx_running = true;
     _rx_thread = std::thread(&Application::srt_rx_loop, this);
 
-    LOG("Video Preview (Rx) started\n");
+    LOG("Starting RX preview on %s:%u!\n", cfg.ip.c_str(), cfg.port);
     return true;
 }
 
@@ -262,10 +242,6 @@ void Application::handle_frame_captured(ID3D11Texture2D* tex, ID3D11Device* dev)
         save_frame_for_loopback(tex, dev);
 }
 
-
-#include <graphics/yuv-to-rgb-converter.h>
-YuvToRgbConverter converter;
-
 void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
     if (!tex)
@@ -277,17 +253,9 @@ void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
         return; 
     }
 
-    D3D11_TEXTURE2D_DESC tmp_desc;
-    tex->GetDesc(&tmp_desc);
-
-    LOG("Received tex, format: %u!\n", static_cast<uint>(tmp_desc.Format));
-
-    ID3D11Texture2D* rgba_tex = converter.convert(dev, tex);
+    ID3D11Texture2D * rgba_tex = _yuv_rgb_converter.convert(dev, tex);
     if (!rgba_tex)
-    {
-        LOG_ERROR("Failed to convert YUV to RGBA!\n");
         return;
-    }
 
     D3D11_TEXTURE2D_DESC desc;
     rgba_tex->GetDesc(&desc);
@@ -297,31 +265,22 @@ void Application::handle_frame_received(ID3D11Texture2D* tex, ID3D11Device* dev)
     _model.preview_texture.copy_from(ctx, rgba_tex);
 }
 
-#include <graphics/cross-device-bridge.h>
-CrossDeviceTextureBridge bridge;
-
 void Application::save_frame_for_loopback(ID3D11Texture2D* tex, ID3D11Device* dev)
 {
-    if (!tex)
+    if (!_model.is_broadcasting.load() || !tex) 
         return;
 
-    ID3D11Texture2D* my_tex = bridge.transfer(dev, tex, _gfx.get_device());
+    ID3D11Texture2D* my_tex = _gfx_bridge.transfer(dev, tex, _gfx.get_device());
     if (!my_tex)
     {
         LOG_ERROR("CrossDevice bridge failed to transfer texture!\n");
         return; 
     }
 
-    // if (dev != _gfx.get_device()) 
-    // {
-    //     LOG_ERROR("Device mismatch!\n");
-    //     return; 
-    // }
-
     D3D11_TEXTURE2D_DESC desc;
     my_tex->GetDesc(&desc);
     
-    ID3D11DeviceContext* ctx = _gfx.get_context();
+    ID3D11DeviceContext * ctx = _gfx.get_context();
     _model.loopback_frame_size.store({desc.Width, desc.Height});
     _model.loopback_texture.copy_from(ctx, my_tex);
 }
@@ -339,8 +298,8 @@ void Application::handle_start_stop_stream()
     }
     else
     {
-        stop_streaming();
         _model.is_broadcasting = false;
+        stop_streaming();
     }
 }
 
@@ -357,8 +316,8 @@ void Application::handle_start_stop_preview()
     }
     else
     {
-        stop_preview();
         _model.is_watching = false;
+        stop_preview();
     }
 }
 
@@ -403,6 +362,30 @@ void Application::srt_rx_loop()
             continue;
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+/* static */ 
+SrtReceiver::NetworkConfig Application::to_srt_network_cfg(const AppModels::NetworkConfigRx& cfg)
+{
+    SrtReceiver::NetworkConfig network_cfg;
+    network_cfg.ip = cfg.server_ip;
+    network_cfg.port = cfg.server_port;
+    network_cfg.pass_phrase = cfg.srt_passphrase;
+    network_cfg.stream_id = std::format("read:{}:{}:{}", cfg.stream_id, cfg.user_name, cfg.user_pwd);
+
+    return network_cfg;
+}
+
+/* static */ 
+SrtTransmitter::NetworkConfig Application::to_srt_network_cfg(const AppModels::NetworkConfigTx& cfg)
+{
+    SrtTransmitter::NetworkConfig network_cfg;
+    network_cfg.ip = cfg.server_ip;
+    network_cfg.port = cfg.server_port;
+    network_cfg.pass_phrase = cfg.srt_passphrase;
+    network_cfg.stream_id = std::format("publish:{}:{}:{}", cfg.stream_id, cfg.user_name, cfg.user_pwd);
+
+    return network_cfg;
 }

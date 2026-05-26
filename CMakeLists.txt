@@ -57,6 +57,8 @@ set(APP_SOURCES
 
     "src/graphics/graphics-context.cpp"
     "src/graphics/texture-buffer.cpp"
+    "src/graphics/cross-device-bridge.cpp"
+    "src/graphics/yuv-rgb-converter.cpp"
     
     "src/network/srt-receiver.cpp"
     "src/network/srt-transmitter.cpp"
