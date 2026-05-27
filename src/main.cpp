@@ -1,10 +1,16 @@
 #include <common.h>
 #include <iostream>
 #include <chrono>
-#include <vector>
 
 #include <network/srt-environment.h>
 #include <app/application.h>
+
+#include <windows.h>
+EXTERN_C_START
+    // Try to set NVIDIA and AMD drivers to use external GPU
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+EXTERN_C_END
 
 uint64_t GetTicksSinceStart() 
 {
