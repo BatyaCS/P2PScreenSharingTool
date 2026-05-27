@@ -16,6 +16,12 @@ class ApplicationUI
     static constexpr uint TARGET_BITRATE_MIN = 500;
     static constexpr uint TARGET_BITRATE_MAX = 10000;
 
+    static constexpr uint LATENCY_MS_MIN = 50;
+    static constexpr uint LATENCY_MS_MAX = 1000;
+
+    static constexpr uint TIMEOUT_MS_MIN = 50;
+    static constexpr uint TIMEOUT_MS_MAX = 300;
+
     using StreamConfig = AppModels::StreamConfig;
 
 public:

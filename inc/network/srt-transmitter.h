@@ -22,8 +22,9 @@ public:
         std::string     ip;
         uint            port;
 
+        uint            latency_ms;
+
         static constexpr size_t buffer_size = 10 * 1024 * 1024;
-        static constexpr uint stream_latency_ms = 300;
     };
 
     SrtTransmitter();

@@ -27,7 +27,9 @@ static const AppViewModel::NetworkConfigRx default_ui_network_config_rx =
     .user_pwd = "",
     .srt_passphrase = "",
     .server_ip = "",
-    .server_port = 8890
+    .server_port = 8890,
+    .latency_ms = 300,
+    .timeout_ms = 100
 };
 
 static const AppViewModel::NetworkConfigTx default_ui_network_config_tx = 
@@ -37,7 +39,8 @@ static const AppViewModel::NetworkConfigTx default_ui_network_config_tx =
     .user_pwd = "",
     .srt_passphrase = "",
     .server_ip = "",
-    .server_port = 8890
+    .server_port = 8890,
+    .latency_ms = 300
 };
 
 bool Application::init()
@@ -480,6 +483,8 @@ SrtReceiver::NetworkConfig Application::to_srt_network_cfg(const AppModels::Netw
     network_cfg.port = cfg.server_port;
     network_cfg.pass_phrase = cfg.srt_passphrase;
     network_cfg.stream_id = std::format("read:{}:{}:{}", cfg.stream_id, cfg.user_name, cfg.user_pwd);
+    network_cfg.latency_ms = cfg.latency_ms;
+    network_cfg.timeout_ms = cfg.timeout_ms;
 
     return network_cfg;
 }
@@ -492,6 +497,7 @@ SrtTransmitter::NetworkConfig Application::to_srt_network_cfg(const AppModels::N
     network_cfg.port = cfg.server_port;
     network_cfg.pass_phrase = cfg.srt_passphrase;
     network_cfg.stream_id = std::format("publish:{}:{}:{}", cfg.stream_id, cfg.user_name, cfg.user_pwd);
+    network_cfg.latency_ms = cfg.latency_ms;
 
     return network_cfg;
 }

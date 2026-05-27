@@ -35,6 +35,8 @@ public:
 
         std::string server_ip;
         uint        server_port;
+
+        uint        latency_ms;
     };
     struct NetworkConfigRx
     {
@@ -46,6 +48,9 @@ public:
 
         std::string server_ip;
         uint        server_port;
+
+        uint        latency_ms;
+        uint        timeout_ms;
     };
     struct LogEntry 
     {
@@ -53,8 +58,8 @@ public:
         std::string text;
     };
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(NetworkConfigTx, stream_id, user_name, user_pwd, srt_passphrase, server_ip, server_port);
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(NetworkConfigRx, stream_id, user_name, user_pwd, srt_passphrase, server_ip, server_port);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(NetworkConfigTx, stream_id, user_name, user_pwd, srt_passphrase, server_ip, server_port, latency_ms);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(NetworkConfigRx, stream_id, user_name, user_pwd, srt_passphrase, server_ip, server_port, latency_ms, timeout_ms);
 };
 
 #endif /* APP_MODELS_H_ */

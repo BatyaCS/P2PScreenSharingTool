@@ -52,7 +52,7 @@ bool SrtTransmitter::open_connection(const NetworkConfig& config)
     const int pkt_drop = static_cast<int>(config.packet_drop);
     srt_setsockopt(_socket, 0, SRTO_TLPKTDROP, &pkt_drop, sizeof(pkt_drop));
 
-    const int latency_ms = static_cast<int>(config.stream_latency_ms);
+    const int latency_ms = static_cast<int>(config.latency_ms);
     srt_setsockopt(_socket, 0, SRTO_LATENCY, &latency_ms, sizeof(latency_ms));
     
     sockaddr_in sa{};

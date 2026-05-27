@@ -223,20 +223,23 @@ void ApplicationUI::render_network_tx_settings(AppViewModel& view)
 {
     ImGui::InputText("Stream ID", &view.network_tx.stream_id);
     ImGui::InputText("User Name", &view.network_tx.user_name);
-    ImGui::InputText("User Pwd", &view.network_tx.user_pwd, ImGuiInputTextFlags_Password);
+    ImGui::InputText("User Password", &view.network_tx.user_pwd, ImGuiInputTextFlags_Password);
     ImGui::InputText("SRT Passphrase", &view.network_tx.srt_passphrase, ImGuiInputTextFlags_Password);
     ImGui::InputText("Server IP", &view.network_tx.server_ip);
     ImGui::InputInt("Server Port", reinterpret_cast<int*>(&view.network_tx.server_port));
+    ImGui::SliderInt("Stream latency ms", reinterpret_cast<int*>(&view.network_tx.latency_ms), LATENCY_MS_MIN, LATENCY_MS_MAX);
 }
 
 void ApplicationUI::render_network_rx_settings(AppViewModel& view)
 {
     ImGui::InputText("Stream ID", &view.network_rx.stream_id);
     ImGui::InputText("User Name", &view.network_rx.user_name);
-    ImGui::InputText("User Pwd", &view.network_rx.user_pwd, ImGuiInputTextFlags_Password);
+    ImGui::InputText("User Password", &view.network_rx.user_pwd, ImGuiInputTextFlags_Password);
     ImGui::InputText("SRT Passphrase", &view.network_rx.srt_passphrase, ImGuiInputTextFlags_Password);
     ImGui::InputText("Server IP", &view.network_rx.server_ip);
     ImGui::InputInt("Server Port", reinterpret_cast<int*>(&view.network_rx.server_port));
+    ImGui::SliderInt("Stream latency ms", reinterpret_cast<int*>(&view.network_rx.latency_ms), LATENCY_MS_MIN, LATENCY_MS_MAX);
+    ImGui::SliderInt("Stream timeout ms", reinterpret_cast<int*>(&view.network_rx.timeout_ms), TIMEOUT_MS_MIN, TIMEOUT_MS_MAX);
 }
 
 void ApplicationUI::render_log_window(AppViewModel& view)
