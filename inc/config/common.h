@@ -9,6 +9,8 @@
 #include <cstring>
 #include <cstdarg>
 #include <cinttypes>
+#include <memory>
+#include <optional>
 #else
 #include <stddef.h>
 #include <stdint.h>

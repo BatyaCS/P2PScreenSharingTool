@@ -113,6 +113,11 @@ void Application::cleanup()
         _window = nullptr;
     }
 
+    //TODO: to check jthread feature with stop tokens !!!
+    _is_rx_running = false;
+    if (_rx_thread.joinable())
+        _rx_thread.join();
+
     save_configs();
 }
 
@@ -124,7 +129,7 @@ void Application::run()
     {
         glfwPollEvents();
 
-        if (_model.is_watching && _decoder.has_error())
+        if (_model.is_watching && (_decoder.has_error() || !_srt_receiver.is_connected()))
         {
             LOG_ERROR("Preview stopped due to error!\n");
             stop_preview();
@@ -180,15 +185,17 @@ bool Application::start_streaming()
 
     if (is_web_stream)
     {
-        HwStreamEncoder::EncoderConfig enc_cfg;
-        enc_cfg.fps = stream_cfg.target_fps;
-        enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
-        
-        if (!select_codec_for_encoder(_gfx.get_device(), enc_cfg.codec))
+        auto codec = select_codec_for_encoder(_gfx.get_device());
+        if (!codec)
         {
             LOG_ERROR("Failed to select codec to start HW Encoder!\n");
             return false;
         }
+
+        HwStreamEncoder::EncoderConfig enc_cfg;
+        enc_cfg.fps = stream_cfg.target_fps;
+        enc_cfg.bitrate_kbps = stream_cfg.target_br_kbps;
+        enc_cfg.codec = *codec;
 
         if (!_encoder.init(enc_cfg))
         {
@@ -273,8 +280,8 @@ bool Application::start_preview()
 void Application::stop_preview()
 {
     _model.is_watching = false;
-    _is_rx_running = false;
-
+   
+     _is_rx_running = false;
     if (_rx_thread.joinable())
         _rx_thread.join();
 
@@ -488,6 +495,51 @@ void Application::srt_rx_loop()
     }
 }
 
+/* static */
+std::optional<HwStreamEncoder::StreamCodec> Application::select_codec_for_encoder(ID3D11Device * device)
+{
+    if (!device) 
+        return std::nullopt;
+
+    Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+    HRESULT hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
+    if (FAILED(hr))
+    {
+        LOG_ERROR("Failed to query D3D interface to select codec!\n");
+        return std::nullopt;
+    }
+
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+    hr = dxgi_device->GetAdapter(&adapter);
+    if (FAILED(hr))
+    {
+        LOG_ERROR("Failed to get D3D adapter to select codec!\n");
+        return std::nullopt;
+    }
+
+    DXGI_ADAPTER_DESC desc;
+    adapter->GetDesc(&desc);
+
+    // TODO: Add support for software encoder in case of none of below supported
+    switch (desc.VendorId)
+    {
+        case 0x10DE: 
+            LOG("Detected NVIDIA GPU. Using NVENC\n");
+            return HwStreamEncoder::StreamCodec::H264_NVEC;
+
+        case 0x1002: 
+            LOG("Detected AMD GPU. Using AMF.\n");
+            return HwStreamEncoder::StreamCodec::H264_AMF;
+
+        case 0x8086: 
+            LOG("Detected Intel GPU. Using QSV.\n");
+            return HwStreamEncoder::StreamCodec::H264_QSV;
+    }
+
+    LOG_ERROR("No HW encoder found for GPU 0x%X!\n", desc.VendorId);
+    return std::nullopt;
+}
+
 /* static */ 
 SrtReceiver::NetworkConfig Application::to_srt_network_cfg(const AppModels::NetworkConfigRx& cfg)
 {
@@ -513,51 +565,4 @@ SrtTransmitter::NetworkConfig Application::to_srt_network_cfg(const AppModels::N
     network_cfg.latency_ms = cfg.latency_ms;
 
     return network_cfg;
-}
-
-bool Application::select_codec_for_encoder(ID3D11Device * device, HwStreamEncoder::StreamCodec& codec) const
-{
-    if (!device) 
-        return false;
-
-    Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
-    HRESULT hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi_device);
-    if (FAILED(hr))
-    {
-        LOG_ERROR("Failed to query D3D interface to select codec!\n");
-        return false;
-    }
-
-    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
-    hr = dxgi_device->GetAdapter(&adapter);
-    if (FAILED(hr))
-    {
-        LOG_ERROR("Failed to get D3D adapter to select codec!\n");
-        return false;
-    }
-
-    DXGI_ADAPTER_DESC desc;
-    adapter->GetDesc(&desc);
-
-    // TODO: Add support for software encoder in case of none of below supported
-    switch (desc.VendorId)
-    {
-        case 0x10DE: 
-            LOG("Detected NVIDIA GPU. Using NVENC\n");
-            codec = HwStreamEncoder::StreamCodec::H264_NVEC; 
-            return true;
-
-        case 0x1002: 
-            LOG("Detected AMD GPU. Using AMF.\n");
-            codec = HwStreamEncoder::StreamCodec::H264_AMF; 
-            return true;
-
-        case 0x8086: 
-            LOG("Detected Intel GPU. Using QSV.\n");
-            codec = HwStreamEncoder::StreamCodec::H264_QSV; 
-            return true;
-    }
-
-    LOG_ERROR("No HW encoder found for GPU 0x%X!\n", desc.VendorId);
-    return false;
 }
